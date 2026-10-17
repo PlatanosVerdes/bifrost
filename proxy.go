@@ -44,6 +44,7 @@ type hub struct {
 	mu       sync.Mutex
 	streams  map[string]*stream
 	lastGood map[string]string // slug -> the content id that last produced video
+	status   *statusBoard
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -65,16 +66,20 @@ type stream struct {
 	ok     bool
 	header http.Header
 
-	mu      sync.Mutex
-	viewers map[chan []byte]struct{}
-	cancel  context.CancelFunc
-	idle    *time.Timer
-	done    bool
+	mu            sync.Mutex
+	viewers       map[chan []byte]struct{}
+	cancel        context.CancelFunc
+	idle          *time.Timer
+	done          bool
+	slug          string
+	source        string
+	playingSince  time.Time
+	startedAfterS int
 }
 
 func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
-		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}}
+		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{}}
 }
 
 func (h *hub) planFor(r *http.Request) (plan, bool) {
@@ -83,18 +88,7 @@ func (h *hub) planFor(r *http.Request) (plan, bool) {
 		if len(ids) == 0 {
 			return plan{label: slug}, false
 		}
-		h.mu.Lock()
-		good := h.lastGood[slug]
-		h.mu.Unlock()
-		ordered := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if id == good {
-				ordered = append([]string{id}, ordered...)
-			} else {
-				ordered = append(ordered, id)
-			}
-		}
-		return plan{key: "channel:" + slug, label: name, slug: slug, sources: ordered,
+		return plan{key: "channel:" + slug, label: name, slug: slug, sources: h.ordered(slug, ids),
 			budget: h.channelWait, perSource: h.sourceWait}, true
 	}
 	id := contentID(r.RequestURI)
@@ -205,7 +199,7 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &stream{h: h, id: p.key, label: p.label, ready: make(chan struct{}),
+	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
 		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel}
 	h.streams[p.key] = s
 
@@ -223,6 +217,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 
 	var resp *http.Response
 	var first []byte
+	var chosen string
 	for i, id := range p.sources {
 		if ctx.Err() != nil || !time.Now().Before(deadline) {
 			break
@@ -248,7 +243,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 			}
 			continue
 		}
-		resp, first = r, b
+		resp, first, chosen = r, b, id
 		if p.slug != "" {
 			s.h.mu.Lock()
 			s.h.lastGood[p.slug] = id
@@ -257,15 +252,22 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 		break
 	}
 	if resp == nil {
+		outcome := "abandoned"
 		if ctx.Err() == nil {
+			outcome = "gave_up"
 			log.Printf("[proxy] %s gave up, no source produced video in %s", s.label, time.Since(start).Round(time.Second))
 		}
+		s.h.status.opened(openRecord{Channel: s.label, At: start, Outcome: outcome, Seconds: int(time.Since(start).Seconds())})
 		close(s.ready)
 		return
 	}
 	defer resp.Body.Close()
 
 	log.Printf("[proxy] %s playing after %s", s.label, time.Since(start).Round(time.Second))
+	s.mu.Lock()
+	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), int(time.Since(start).Seconds())
+	s.mu.Unlock()
+	s.h.status.opened(openRecord{Channel: s.label, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
 	s.ok, s.header = true, resp.Header.Clone()
 	close(s.ready)
 	s.broadcast(first)

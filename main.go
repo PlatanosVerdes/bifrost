@@ -43,6 +43,8 @@ func main() {
 		}
 		w.Write([]byte("ok\n"))
 	})
+	mux.HandleFunc("/api/status", h.serveStatus)
+	mux.HandleFunc("/api/channels", h.serveChannels)
 	mux.HandleFunc("/", h.serve)
 
 	log.Printf("bifrost %s: %s -> %s, playlist %s", buildVersion, cfg.listenAddr, cfg.aceserveBaseURL, cfg.outputFile)

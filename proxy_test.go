@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -251,5 +252,93 @@ func TestUnknownChannelIs404(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status %d, want 404", resp.StatusCode)
+	}
+}
+
+func getJSON(t *testing.T, url string, v any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newStatusProxy(t *testing.T, engine http.Handler, ids ...string) (*httptest.Server, *hub) {
+	t.Helper()
+	upstream := httptest.NewServer(engine)
+	t.Cleanup(upstream.Close)
+	h := newHub(upstream.URL, time.Second, 50*time.Millisecond)
+	h.table.set([]string{"channel-a-1080p"}, map[string]*channelGroup{
+		"channel-a-1080p": {Name: "Channel A 1080p", IDs: ids,
+			extinf: `#EXTINF:-1 tvg-id="Channel A HD" tvg-logo="https://x/l.png" group-title="GROUP A",Channel A 1080p`}})
+	h.sourceWait, h.channelWait = 400*time.Millisecond, 3*time.Second
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/status", h.serveStatus)
+	mux.HandleFunc("/api/channels", h.serveChannels)
+	mux.HandleFunc("/", h.serve)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, h
+}
+
+// The status page reports what is playing and how it started, without opening anything itself.
+func TestStatusShowsWhatIsPlaying(t *testing.T) {
+	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true}}
+	srv, _ := newStatusProxy(t, engine, twoSources...)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/channel-a-1080p", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.ReadAtLeast(resp.Body, make([]byte, 8192), 8192)
+
+	var st struct {
+		Streams []streamStatus `json:"streams"`
+		Recent  []openRecord   `json:"recent"`
+	}
+	opened := engine.opened.Load()
+	getJSON(t, srv.URL+"/api/status", &st)
+	if engine.opened.Load() != opened {
+		t.Error("the status page opened a channel")
+	}
+	if len(st.Streams) != 1 || st.Streams[0].Source != twoSources[1] || st.Streams[0].Viewers != 1 {
+		t.Errorf("streams = %+v, want the channel on its second source with one viewer", st.Streams)
+	}
+	if len(st.Recent) != 1 || st.Recent[0].Outcome != "playing" {
+		t.Errorf("recent = %+v, want one open that played", st.Recent)
+	}
+
+	var ch struct {
+		Channels []channelInfo `json:"channels"`
+	}
+	getJSON(t, srv.URL+"/api/channels", &ch)
+	if len(ch.Channels) != 1 || ch.Channels[0].IDs[0] != twoSources[1] || ch.Channels[0].Group != "GROUP A" {
+		t.Errorf("channels = %+v, want the source that played first and the group", ch.Channels)
+	}
+}
+
+func TestStatusRecordsAFailedOpen(t *testing.T) {
+	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true, twoSources[1]: true}}
+	srv, _ := newStatusProxy(t, engine, twoSources...)
+	resp, err := http.Get(srv.URL + "/channel/channel-a-1080p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	var st struct {
+		Recent []openRecord `json:"recent"`
+	}
+	getJSON(t, srv.URL+"/api/status", &st)
+	if len(st.Recent) != 1 || st.Recent[0].Outcome != "gave_up" {
+		t.Errorf("recent = %+v, want one open that gave up", st.Recent)
 	}
 }

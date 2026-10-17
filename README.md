@@ -62,7 +62,22 @@ bifrost:
 | `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
-(as Jellyfin sees those paths). `GET /healthz` answers 200 once a list has been read.
+(as Jellyfin sees those paths).
+
+### HTTP
+
+| Route | What it answers |
+| :--- | :--- |
+| `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
+| `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
+| `GET /api/channels` | Every channel with its group, logo, tvg-id and sources, the one that last played first |
+| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, how long it took to start), and the last 20 opens with their outcome |
+| `GET /healthz` | 200 once a list has been read |
+
+None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
+knows from the list and from the streams passing through it. A player that goes to the engine
+directly (and so skips the shared connection) can take a channel's current source from
+`/api/channels`.
 
 The metrics keep the names of the service this replaced (`acestream_run_total`,
 `acestream_unique_channels`, `acestream_jellyfin_refresh_http_code`…), pushed under the job

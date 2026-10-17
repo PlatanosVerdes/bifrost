@@ -344,6 +344,7 @@ func (l *lister) run() {
 
 	if combined.Len() == 0 {
 		log.Printf("error: all sources failed")
+		l.board().listRead(0, 0, false, "all sources failed")
 		saveState(stateFile, s)
 		pushMetrics(cfg.pushgatewayURL, s, nil, 0, sourceHTTPCodes)
 		return
@@ -394,6 +395,7 @@ func (l *lister) run() {
 		s.successNoChanges++
 	}
 
+	l.board().listRead(len(order), len(channels), changed, "")
 	if changed {
 		l.refreshDue = time.Now().Add(refreshDebounce)
 		log.Printf("Jellyfin refresh due after %s without further changes", refreshDebounce)
@@ -407,9 +409,18 @@ func (l *lister) run() {
 		}
 	}
 
+	l.board().refreshed(jellyfinCode, l.refreshDue)
 	saveState(stateFile, s)
 	pushMetrics(cfg.pushgatewayURL, s, channels, jellyfinCode, sourceHTTPCodes)
 	log.Printf("Done.")
+}
+
+// board is where the status page reads from; a lister without a hub (tests) writes to a throwaway.
+func (l *lister) board() *statusBoard {
+	if l.hub == nil {
+		return &statusBoard{}
+	}
+	return l.hub.status
 }
 
 // keepWatched puts back a channel someone is watching when the list skipped it this pass: dropping
