@@ -2,6 +2,17 @@
 
 Bridges an AceStream channel list published on IPFS to Jellyfin's Live TV.
 
+> **Why the name.** In Norse myth, Bifröst is the burning rainbow bridge between Midgard and Asgard,
+> guarded day and night by Heimdall, who can hear grass grow and wool grow on sheep. Here it joins a
+> peer-to-peer swarm of dubious provenance to a Samsung TV, guarded by a Raspberry Pi that can play
+> exactly one channel at a time. The scale differs; the job is the same. It also sits next to a
+> server called streamhalla, and once you have named one machine after Valhalla, the bridge to it
+> was never going to be called `acestream-gateway`.
+>
+> The myth ends with the bridge collapsing under the weight of the giants at Ragnarök. The real
+> giants are 34 MB guides re-parsed every few minutes and two connections to one channel, which is
+> why most of this README is about not letting them cross.
+
 One process, two halves sharing the channel catalog in memory:
 
 - **The list loop** reads the list every 1–5 minutes, folds its sources into channels, and writes
