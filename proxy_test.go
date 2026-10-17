@@ -342,3 +342,28 @@ func TestStatusRecordsAFailedOpen(t *testing.T) {
 		t.Errorf("recent = %+v, want one open that gave up", st.Recent)
 	}
 }
+
+func TestStatusAsksJellyfinHowItPlays(t *testing.T) {
+	jf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Sessions" || r.Header.Get("X-Emby-Token") != "k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`[
+		 {"Client":"Jellyfin for Tizen","DeviceName":"Samsung Smart TV","NowPlayingItem":{"Name":"DAZN LaLiga 1080p","Type":"TvChannel"},
+		  "TranscodingInfo":{"IsVideoDirect":false,"IsAudioDirect":false,"TranscodeReasons":["ContainerNotSupported","VideoCodecNotSupported"],"Framerate":12.3}},
+		 {"Client":"Web","DeviceName":"Firefox","NowPlayingItem":{"Name":"Some film","Type":"Movie"}}]`))
+	}))
+	defer jf.Close()
+	srv, h := newStatusProxy(t, &perIDEngine{}, twoSources...)
+	h.jellyfinURL, h.jellyfinKey = jf.URL, "k"
+
+	var st struct {
+		Playing []jellyfinPlayback `json:"jellyfin_playing"`
+	}
+	getJSON(t, srv.URL+"/api/status", &st)
+	if len(st.Playing) != 1 || st.Playing[0].Video != "transcode" || st.Playing[0].Device != "Samsung Smart TV" ||
+		len(st.Playing[0].Reasons) != 2 {
+		t.Errorf("jellyfin_playing = %+v, want the TV channel, re-encoded, with its reasons", st.Playing)
+	}
+}

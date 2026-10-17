@@ -22,6 +22,7 @@ func main() {
 
 	h := newHub(cfg.aceserveBaseURL, getduration("MAX_WAIT", 45*time.Second), getduration("LINGER", 10*time.Second))
 	h.table = cat
+	h.jellyfinURL, h.jellyfinKey = cfg.jellyfinURL, cfg.jellyfinAPIKey
 	h.sourceWait = getduration("SOURCE_WAIT", 25*time.Second)
 	h.channelWait = getduration("CHANNEL_MAX_WAIT", 90*time.Second)
 

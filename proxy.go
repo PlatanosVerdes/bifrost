@@ -45,6 +45,8 @@ type hub struct {
 	streams  map[string]*stream
 	lastGood map[string]string // slug -> the content id that last produced video
 	status   *statusBoard
+
+	jellyfinURL, jellyfinKey string // only for /api/status to ask how Jellyfin is playing
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.

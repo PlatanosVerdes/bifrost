@@ -71,7 +71,7 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
 | `GET /api/channels` | Every channel with its group, logo, tvg-id and sources, the one that last played first |
-| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, how long it took to start), and the last 20 opens with their outcome |
+| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, how long it took to start), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons), asked from its /Sessions on each request |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
