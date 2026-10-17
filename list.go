@@ -261,6 +261,9 @@ func hostFromURL(rawURL string) string {
 // pushMetrics uses PUT so stale channel metrics are removed when channels disappear.
 func pushMetrics(pushURL string, s state, channels []channel, jellyfinCode int,
 	sourceHTTPCodes map[string]int) {
+	if pushURL == "" {
+		return
+	}
 
 	var buf bytes.Buffer
 	w := func(format string, a ...any) { fmt.Fprintf(&buf, format, a...) }
