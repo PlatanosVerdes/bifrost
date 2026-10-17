@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -119,6 +121,13 @@ func (h *hub) serveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	h.status.mu.Unlock()
 	body["streams"] = h.streamsNow()
+	if h.jellyfinURL != "" {
+		if playing, err := jellyfinSessions(h.jellyfinURL, h.jellyfinKey); err != nil {
+			body["jellyfin_error"] = err.Error()
+		} else {
+			body["jellyfin_playing"] = playing
+		}
+	}
 	writeJSON(w, body)
 }
 
@@ -172,4 +181,72 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	enc.Encode(v)
+}
+
+// jellyfinPlayback is how Jellyfin is delivering a live channel: copying it or re-encoding it, and
+// why. A re-encode on a Pi 4 cannot keep up with 1080p, so this is the first thing to look at when a
+// channel plays for a few seconds and stalls.
+type jellyfinPlayback struct {
+	Channel   string   `json:"channel"`
+	Client    string   `json:"client"`
+	Device    string   `json:"device"`
+	Video     string   `json:"video"` // copy or transcode
+	Audio     string   `json:"audio"`
+	Reasons   []string `json:"reasons,omitempty"`
+	Framerate float64  `json:"framerate,omitempty"`
+	Progress  float64  `json:"completion,omitempty"`
+}
+
+// jellyfinSessions asks Jellyfin, once per status request, which live channels it is playing.
+func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/Sessions?activeWithinSeconds=60", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Emby-Token", apiKey)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Jellyfin /Sessions: HTTP %d", resp.StatusCode)
+	}
+	var sessions []struct {
+		Client         string
+		DeviceName     string
+		NowPlayingItem *struct {
+			Name string
+			Type string
+		}
+		TranscodingInfo *struct {
+			IsVideoDirect        bool
+			IsAudioDirect        bool
+			TranscodeReasons     []string
+			Framerate            float64
+			CompletionPercentage float64
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return nil, err
+	}
+	out := []jellyfinPlayback{}
+	for _, s := range sessions {
+		if s.NowPlayingItem == nil || s.NowPlayingItem.Type != "TvChannel" {
+			continue
+		}
+		p := jellyfinPlayback{Channel: s.NowPlayingItem.Name, Client: s.Client, Device: s.DeviceName,
+			Video: "copy", Audio: "copy"}
+		if t := s.TranscodingInfo; t != nil {
+			if !t.IsVideoDirect {
+				p.Video = "transcode"
+			}
+			if !t.IsAudioDirect {
+				p.Audio = "transcode"
+			}
+			p.Reasons, p.Framerate, p.Progress = t.TranscodeReasons, t.Framerate, t.CompletionPercentage
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
