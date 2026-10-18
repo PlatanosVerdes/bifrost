@@ -49,6 +49,7 @@ type hub struct {
 
 	jellyfinURL, jellyfinKey string // only for /api/status to ask how Jellyfin is playing
 	name                     string // the machine, shown on the page
+	schedule                 *schedule
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -83,7 +84,8 @@ type stream struct {
 
 func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
-		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{}}
+		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
+		schedule: &schedule{}}
 }
 
 func (h *hub) planFor(r *http.Request) (plan, bool) {

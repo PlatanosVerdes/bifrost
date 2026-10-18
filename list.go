@@ -372,6 +372,9 @@ func (l *lister) run() {
 				log.Printf("error trimming the guide: %v", err)
 			} else {
 				l.guideIDs = ids
+				if err := l.hub.schedule.load(guide); err != nil {
+					log.Printf("warning: reading the guide back: %v", err)
+				}
 				if st, err := os.Stat(guide); err == nil {
 					l.board().guideCut(len(ids), st.Size())
 				}
