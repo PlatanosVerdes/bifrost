@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -77,7 +78,7 @@ type stream struct {
 	slug          string
 	source        string
 	playingSince  time.Time
-	startedAfterS int
+	startedAfterS float64
 }
 
 func newHub(base string, maxWait, linger time.Duration) *hub {
@@ -270,15 +271,15 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 			outcome = "gave_up"
 			log.Printf("[proxy] %s gave up, no source produced video in %s", s.label, time.Since(start).Round(time.Second))
 		}
-		s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, At: start, Outcome: outcome, Seconds: int(time.Since(start).Seconds())})
+		s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, At: start, Outcome: outcome, Seconds: tenths(time.Since(start))})
 		close(s.ready)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[proxy] %s playing after %s", s.label, time.Since(start).Round(time.Second))
+	log.Printf("[proxy] %s playing after %.1fs", s.label, tenths(time.Since(start)))
 	s.mu.Lock()
-	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), int(time.Since(start).Seconds())
+	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), tenths(time.Since(start))
 	s.mu.Unlock()
 	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
 	s.ok, s.header = true, resp.Header.Clone()
@@ -442,6 +443,11 @@ func awaitFirstBytes(ctx context.Context, body io.Reader, ch string, start, dead
 			return nil, false
 		}
 	}
+}
+
+// tenths is a duration in seconds to one decimal, so a start under a second does not read as 0.
+func tenths(d time.Duration) float64 {
+	return math.Round(d.Seconds()*10) / 10
 }
 
 func short(id string) string {

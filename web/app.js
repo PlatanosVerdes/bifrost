@@ -17,19 +17,20 @@ const ago = (t) => {
   return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min ago`;
 };
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const secs = (n) => `${Number(n ?? 0).toFixed(1)} s`;
 
 // What a channel's dot and line say: playing now, else its last open since bifrost started.
 function channelState(channel, jellyfin) {
   if (channel.playing) {
     const jf = jellyfin.find((p) => p.channel === channel.name);
     const how = jf ? (jf.video === "copy" ? " · Jellyfin copies" : " · Jellyfin re-encodes") : "";
-    return { tone: "live", text: `Playing · ${channel.playing.viewers} watching · started in ${channel.playing.started_after_s} s${how}` };
+    return { tone: "live", text: `Playing · ${channel.playing.viewers} watching · first video in ${secs(channel.playing.started_after_s)}${how}` };
   }
   const o = channel.last_open;
   if (!o) return { tone: "none", text: "Not opened yet" };
-  if (o.outcome === "playing") return { tone: "ok", text: `Played at ${hhmm(o.at)} · started in ${o.seconds} s` };
-  if (o.outcome === "gave_up") return { tone: "bad", text: `No source played at ${hhmm(o.at)} (${o.seconds} s)` };
-  return { tone: "warn", text: `Left before it started at ${hhmm(o.at)} (${o.seconds} s)` };
+  if (o.outcome === "playing") return { tone: "ok", text: `Played at ${hhmm(o.at)} · first video in ${secs(o.seconds)}` };
+  if (o.outcome === "gave_up") return { tone: "bad", text: `No source played at ${hhmm(o.at)} (${secs(o.seconds)})` };
+  return { tone: "warn", text: `Left before it started at ${hhmm(o.at)} (${secs(o.seconds)})` };
 }
 
 // Styles every component starts from: cards, dots, small text. Colours only through the tokens.
@@ -152,6 +153,7 @@ class ActivityView extends LitElement {
     .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
     .tag.trans { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+    .tag.slow { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
   `];
 
   screen(on) {
@@ -162,13 +164,13 @@ class ActivityView extends LitElement {
     const streams = this.status.streams || [], jellyfin = this.status.jellyfin_playing || [];
     if (!streams.length) {
       return html`<div class="row">${this.screen(false)}<div><b>Nobody is watching</b>
-        <p>When a channel is open it shows here: its source, how many are watching, how long it took to start, and whether Jellyfin copies the video or re-encodes it.</p></div></div>`;
+        <p>When a channel is open it shows here: its source, how many are watching, how soon the engine gave the first video, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.</p></div></div>`;
     }
     return streams.map((st) => {
       const jf = jellyfin.find((p) => st.channel.startsWith(p.channel));
       return html`<div class="row">${this.screen(true)}<div>
-        <b>${st.channel}</b>${jf ? html`<span class="tag ${jf.video === "copy" ? "copy" : "trans"}">${jf.video === "copy" ? "copy" : "re-encode"}</span>` : nothing}
-        <p>Source ${(st.source || "").slice(0, 8)} · ${st.viewers} watching · since ${hhmm(st.since)} · started in ${st.started_after_s} s${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
+        <b>${st.channel}</b>${jf ? html`<span class="tag ${jf.video === "copy" ? "copy" : "trans"}">${jf.video === "copy" ? "copy" : "re-encode"}</span>` : nothing}${jf?.speed ? html`<span class="tag ${jf.speed >= 0.95 ? "copy" : "slow"}" title="Jellyfin's speed against live: below 1x it falls behind and the picture stalls">${jf.speed.toFixed(2)}x</span>` : nothing}
+        <p>Source ${(st.source || "").slice(0, 8)} · ${st.viewers} watching · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
       </div></div>`;
     });
   }
@@ -178,7 +180,7 @@ class ActivityView extends LitElement {
     if (!recent.length) return html`<li><span></span><span class="muted">No opens since bifrost started.</span><span></span></li>`;
     return recent.map((r) => {
       const tone = r.outcome === "playing" ? "ok" : r.outcome === "gave_up" ? "bad" : "warn";
-      const res = r.outcome === "playing" ? `${r.seconds} s` : r.outcome === "gave_up" ? "no video" : "left early";
+      const res = r.outcome === "playing" ? secs(r.seconds) : r.outcome === "gave_up" ? "no video" : "left early";
       return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone}">${res}</span></li>`;
     });
   }
