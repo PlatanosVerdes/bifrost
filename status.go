@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -42,7 +43,7 @@ type openRecord struct {
 	Source  string    `json:"source,omitempty"`
 	At      time.Time `json:"at"`
 	Outcome string    `json:"outcome"` // playing, gave_up, abandoned
-	Seconds int       `json:"seconds"`
+	Seconds float64   `json:"seconds"`
 }
 
 type streamStatus struct {
@@ -51,7 +52,7 @@ type streamStatus struct {
 	Source        string    `json:"source,omitempty"`
 	Viewers       int       `json:"viewers"`
 	Since         time.Time `json:"since"`
-	StartedAfterS int       `json:"started_after_s"`
+	StartedAfterS float64   `json:"started_after_s"`
 }
 
 // statusBoard is written by both halves and read by the handlers.
@@ -239,7 +240,9 @@ type jellyfinPlayback struct {
 	Audio     string   `json:"audio"`
 	Reasons   []string `json:"reasons,omitempty"`
 	Framerate float64  `json:"framerate,omitempty"`
-	Progress  float64  `json:"completion,omitempty"`
+	// Speed is ffmpeg's frame rate over the channel's: below 1 it falls behind live and stalls.
+	Speed    float64 `json:"speed,omitempty"`
+	Progress float64 `json:"completion,omitempty"`
 }
 
 // jellyfinSessions asks Jellyfin, once per status request, which live channels it is playing.
@@ -261,8 +264,12 @@ func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
 		Client         string
 		DeviceName     string
 		NowPlayingItem *struct {
-			Name string
-			Type string
+			Name         string
+			Type         string
+			MediaStreams []struct {
+				Type          string
+				RealFrameRate float64
+			}
 		}
 		TranscodingInfo *struct {
 			IsVideoDirect        bool
@@ -290,6 +297,11 @@ func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
 				p.Audio = "transcode"
 			}
 			p.Reasons, p.Framerate, p.Progress = t.TranscodeReasons, t.Framerate, t.CompletionPercentage
+			for _, m := range s.NowPlayingItem.MediaStreams {
+				if m.Type == "Video" && m.RealFrameRate > 0 && t.Framerate > 0 {
+					p.Speed = math.Round(t.Framerate/m.RealFrameRate*100) / 100
+				}
+			}
 		}
 		out = append(out, p)
 	}
