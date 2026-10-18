@@ -351,7 +351,7 @@ func TestStatusAsksJellyfinHowItPlays(t *testing.T) {
 			return
 		}
 		w.Write([]byte(`[
-		 {"Client":"Jellyfin for Tizen","DeviceName":"Samsung Smart TV","NowPlayingItem":{"Name":"DAZN LaLiga 1080p","Type":"TvChannel"},
+		 {"Client":"Jellyfin for Tizen","DeviceName":"Samsung Smart TV","NowPlayingItem":{"Name":"DAZN LaLiga 1080p","Type":"TvChannel","MediaStreams":[{"Type":"Audio"},{"Type":"Video","RealFrameRate":25}]},
 		  "TranscodingInfo":{"IsVideoDirect":false,"IsAudioDirect":false,"TranscodeReasons":["ContainerNotSupported","VideoCodecNotSupported"],"Framerate":12.3}},
 		 {"Client":"Web","DeviceName":"Firefox","NowPlayingItem":{"Name":"Some film","Type":"Movie"}}]`))
 	}))
@@ -364,8 +364,8 @@ func TestStatusAsksJellyfinHowItPlays(t *testing.T) {
 	}
 	getJSON(t, srv.URL+"/api/status", &st)
 	if len(st.Playing) != 1 || st.Playing[0].Video != "transcode" || st.Playing[0].Device != "Samsung Smart TV" ||
-		len(st.Playing[0].Reasons) != 2 {
-		t.Errorf("jellyfin_playing = %+v, want the TV channel, re-encoded, with its reasons", st.Playing)
+		len(st.Playing[0].Reasons) != 2 || st.Playing[0].Speed != 0.49 {
+		t.Errorf("jellyfin_playing = %+v, want the TV channel, re-encoded at 0.49x, with its reasons", st.Playing)
 	}
 }
 
