@@ -385,14 +385,14 @@ func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
 	if len(ch.Channels) != 1 || ch.Channels[0].LastOpen == nil || ch.Channels[0].LastOpen.Outcome != "gave_up" {
 		t.Errorf("channels = %+v, want the failed open as last_open", ch.Channels)
 	}
-	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement"} {
+	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement", "/favicon.svg": "<svg"} {
 		rec := httptest.NewRecorder()
 		servePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("GET %s: %d, missing %q", path, rec.Code, want)
 		}
 	}
-	if isPage("/channel/dazn-laliga-1080p") || isPage("/ace/getstream") || !isPage("/") {
+	if isPage("/channel/dazn-laliga-1080p") || isPage("/ace/getstream") || !isPage("/") || !isPage("/favicon.svg") {
 		t.Error("isPage routes streams to the page or the page to the proxy")
 	}
 }
