@@ -48,7 +48,7 @@ func main() {
 	mux.HandleFunc("/api/status", h.serveStatus)
 	mux.HandleFunc("/api/channels", h.serveChannels)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
+		if isPage(r.URL.Path) {
 			servePage(w, r)
 			return
 		}

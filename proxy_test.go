@@ -385,7 +385,14 @@ func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
 	if len(ch.Channels) != 1 || ch.Channels[0].LastOpen == nil || ch.Channels[0].LastOpen.Outcome != "gave_up" {
 		t.Errorf("channels = %+v, want the failed open as last_open", ch.Channels)
 	}
-	if len(page) < 1000 || !strings.Contains(string(page), "api/channels") {
-		t.Error("the embedded page is missing or does not read the API")
+	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement"} {
+		rec := httptest.NewRecorder()
+		servePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("GET %s: %d, missing %q", path, rec.Code, want)
+		}
+	}
+	if isPage("/channel/channel-a-1080p") || isPage("/ace/getstream") || !isPage("/") {
+		t.Error("isPage routes streams to the page or the page to the proxy")
 	}
 }
