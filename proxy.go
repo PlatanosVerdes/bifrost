@@ -95,6 +95,9 @@ func (h *hub) planFor(r *http.Request) (plan, bool) {
 			budget: h.channelWait, perSource: h.sourceWait}, true
 	}
 	id := contentID(r.RequestURI)
+	if id == "" {
+		return plan{label: r.URL.Path}, false
+	}
 	return plan{key: id, label: h.label(id), sources: []string{id}, budget: h.maxWait, perSource: h.maxWait}, true
 }
 
@@ -128,6 +131,13 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		log.Printf("[proxy] %s is not in the channel table", p.label)
 		http.Error(w, "unknown channel", http.StatusNotFound)
+		return
+	}
+	// Jellyfin asks HEAD before playing, then sends GET on the same connection: a HEAD that streamed
+	// would hold that connection and leave the GET waiting until Jellyfin's 100s timeout.
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	s, viewer, shared := h.join(p, r)
@@ -444,12 +454,9 @@ func short(id string) string {
 func contentID(requestURI string) string {
 	u, err := url.Parse(requestURI)
 	if err != nil {
-		return "unknown"
+		return ""
 	}
-	if id := u.Query().Get("id"); id != "" {
-		return id
-	}
-	return "unknown"
+	return u.Query().Get("id")
 }
 
 func getenv(key, def string) string {
