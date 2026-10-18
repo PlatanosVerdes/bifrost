@@ -24,7 +24,7 @@ var webFiles = func() http.Handler {
 
 // isPage says whether a path belongs to the page rather than to a stream.
 func isPage(path string) bool {
-	return path == "/" || path == "/app.js" || strings.HasPrefix(path, "/vendor/")
+	return path == "/" || path == "/app.js" || path == "/favicon.svg" || strings.HasPrefix(path, "/vendor/")
 }
 
 func servePage(w http.ResponseWriter, r *http.Request) {
