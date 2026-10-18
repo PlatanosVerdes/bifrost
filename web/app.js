@@ -57,7 +57,7 @@ class ChannelGroup extends LitElement {
     .card { height: 300px; display: flex; flex-direction: column; }
     h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
     h3 span { font-family: var(--font-data); letter-spacing: 0; text-transform: none; font-weight: 500; }
-    ul { list-style: none; margin: 0; padding: 0 4px 0 0; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; }
+    ul { list-style: none; margin: 0 0 0 -4px; padding: 0 4px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; }
     li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
     li:first-child { border-top: 0; }
     .name { font-weight: 600; font-size: 14px; min-width: 0; }
