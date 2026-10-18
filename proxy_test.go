@@ -396,3 +396,45 @@ func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
 		t.Error("isPage routes streams to the page or the page to the proxy")
 	}
 }
+
+// Jellyfin 10.11 sends HEAD to tell HLS from TS, then GET on the same keep-alive connection.
+func TestHeadThenGetOnOneConnectionPlays(t *testing.T) {
+	engine := &fakeEngine{}
+	proxy := newChannelProxy(t, engine, "good000000000000000000000000000000000000")
+	url := proxy.URL + "/channel/channel-a-1080p"
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	head, err := client.Head(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Body.Close()
+	if head.StatusCode != http.StatusOK || head.Header.Get("Content-Type") != "video/mp2t" {
+		t.Errorf("HEAD answered %d %q, want 200 video/mp2t", head.StatusCode, head.Header.Get("Content-Type"))
+	}
+	if n := engine.opened.Load(); n != 0 {
+		t.Errorf("HEAD opened the engine %d times, want 0", n)
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if n, err := io.ReadAtLeast(resp.Body, make([]byte, 8192), 8192); err != nil {
+		t.Fatalf("GET after HEAD read %d bytes: %v", n, err)
+	}
+}
+
+func TestRequestWithoutChannelOrIDIs404(t *testing.T) {
+	engine := &fakeEngine{}
+	proxy := newTestProxy(t, engine, time.Second, 50*time.Millisecond)
+	resp, err := http.Get(proxy.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || engine.opened.Load() != 0 {
+		t.Errorf("status %d with %d engine opens, want 404 and none", resp.StatusCode, engine.opened.Load())
+	}
+}
