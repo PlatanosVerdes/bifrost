@@ -62,6 +62,7 @@ class ChannelGroup extends LitElement {
     li:first-child { border-top: 0; }
     .name { font-weight: 600; font-size: 14px; min-width: 0; }
     .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+    .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
   `];
 
@@ -74,6 +75,7 @@ class ChannelGroup extends LitElement {
           <i class="dot ${st.tone}" aria-hidden="true"></i>
           <span class="name">${c.name}</span>
           <span class="src">${plural(c.ids.length, "source")}</span>
+          ${c.now ? html`<span class="air" title="${c.now.title}, until ${hhmm(c.now.stop)}">${c.now.title} · until ${hhmm(c.now.stop)}</span>` : nothing}
           <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}</span>
         </li>`;
       })}</ul>
@@ -138,6 +140,8 @@ class ActivityView extends LitElement {
     .ring { width: 44px; height: 44px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); }
     .ring.on { border: 2px solid var(--accent); color: var(--accent); }
     .row p { margin: 2px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
+    .row p.air { color: var(--ink); font-size: 15px; font-weight: 500; }
+    .row p.air span { color: var(--muted); font-weight: 400; }
     .duo { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
     .big { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 10px; }
     .big b { display: block; font-family: var(--font-display); font-weight: 500; font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -164,12 +168,13 @@ class ActivityView extends LitElement {
     const streams = this.status.streams || [], jellyfin = this.status.jellyfin_playing || [];
     if (!streams.length) {
       return html`<div class="row">${this.screen(false)}<div><b>Nobody is watching</b>
-        <p>When a channel is open it shows here: its source, how many are watching, how soon the engine gave the first video, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.</p></div></div>`;
+        <p>When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.</p></div></div>`;
     }
     return streams.map((st) => {
       const jf = jellyfin.find((p) => st.channel.startsWith(p.channel));
       return html`<div class="row">${this.screen(true)}<div>
         <b>${st.channel}</b>${jf ? html`<span class="tag ${jf.video === "copy" ? "copy" : "trans"}">${jf.video === "copy" ? "copy" : "re-encode"}</span>` : nothing}${jf?.speed ? html`<span class="tag ${jf.speed >= 0.95 ? "copy" : "slow"}" title="Jellyfin's speed against live: below 1x it falls behind and the picture stalls">${jf.speed.toFixed(2)}x</span>` : nothing}
+        ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
         <p>Source ${(st.source || "").slice(0, 8)} · ${st.viewers} watching · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
       </div></div>`;
     });

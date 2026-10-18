@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"path/filepath"
 	"time"
 )
 
@@ -26,6 +27,9 @@ func main() {
 	h.name = getenv("BIFROST_NAME", hostname())
 	h.sourceWait = getduration("SOURCE_WAIT", 25*time.Second)
 	h.channelWait = getduration("CHANNEL_MAX_WAIT", 90*time.Second)
+
+	// The guide left by the last run, so the page knows what airs before the first pass cuts a new one.
+	_ = h.schedule.load(filepath.Join(filepath.Dir(cfg.outputFile), "guide.xml"))
 
 	l := &lister{cfg: cfg, catalog: cat, hub: h}
 	go func() {
