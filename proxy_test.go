@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -365,5 +366,26 @@ func TestStatusAsksJellyfinHowItPlays(t *testing.T) {
 	if len(st.Playing) != 1 || st.Playing[0].Video != "transcode" || st.Playing[0].Device != "Samsung Smart TV" ||
 		len(st.Playing[0].Reasons) != 2 {
 		t.Errorf("jellyfin_playing = %+v, want the TV channel, re-encoded, with its reasons", st.Playing)
+	}
+}
+
+func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
+	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true, twoSources[1]: true}}
+	srv, _ := newStatusProxy(t, engine, twoSources...)
+	resp, err := http.Get(srv.URL + "/channel/channel-a-1080p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	var ch struct {
+		Channels []channelInfo `json:"channels"`
+	}
+	getJSON(t, srv.URL+"/api/channels", &ch)
+	if len(ch.Channels) != 1 || ch.Channels[0].LastOpen == nil || ch.Channels[0].LastOpen.Outcome != "gave_up" {
+		t.Errorf("channels = %+v, want the failed open as last_open", ch.Channels)
+	}
+	if len(page) < 1000 || !strings.Contains(string(page), "api/channels") {
+		t.Error("the embedded page is missing or does not read the API")
 	}
 }

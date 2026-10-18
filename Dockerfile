@@ -6,6 +6,7 @@ WORKDIR /src
 ARG VERSION=local
 COPY go.mod ./
 COPY *.go ./
+COPY web/ ./web/
 # Static binary: the runtime image has no libc to link against.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost .
 

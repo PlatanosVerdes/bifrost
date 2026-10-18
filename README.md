@@ -60,6 +60,7 @@ bifrost:
 | `STATE_DIR` | `/state` | Run counters and the cached full guide |
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
 | `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
+| `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
 (as Jellyfin sees those paths).
@@ -68,9 +69,10 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 
 | Route | What it answers |
 | :--- | :--- |
+| `GET /` | The status page: every channel with its state (playing, last open played, left early, failed, not opened yet) and its sources first, then an Activity tab with what is playing, recent opens, and the list and guide. Reads the two API routes below every 10 s |
 | `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
-| `GET /api/channels` | Every channel with its group, logo, tvg-id and sources, the one that last played first |
+| `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, and its last open since bifrost started |
 | `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, how long it took to start), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons), asked from its /Sessions on each request |
 | `GET /healthz` | 200 once a list has been read |
 

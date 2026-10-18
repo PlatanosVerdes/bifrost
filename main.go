@@ -23,6 +23,7 @@ func main() {
 	h := newHub(cfg.aceserveBaseURL, getduration("MAX_WAIT", 45*time.Second), getduration("LINGER", 10*time.Second))
 	h.table = cat
 	h.jellyfinURL, h.jellyfinKey = cfg.jellyfinURL, cfg.jellyfinAPIKey
+	h.name = getenv("BIFROST_NAME", hostname())
 	h.sourceWait = getduration("SOURCE_WAIT", 25*time.Second)
 	h.channelWait = getduration("CHANNEL_MAX_WAIT", 90*time.Second)
 
@@ -46,7 +47,13 @@ func main() {
 	})
 	mux.HandleFunc("/api/status", h.serveStatus)
 	mux.HandleFunc("/api/channels", h.serveChannels)
-	mux.HandleFunc("/", h.serve)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			servePage(w, r)
+			return
+		}
+		h.serve(w, r)
+	})
 
 	log.Printf("bifrost %s: %s -> %s, playlist %s", buildVersion, cfg.listenAddr, cfg.aceserveBaseURL, cfg.outputFile)
 	log.Fatal(http.ListenAndServe(cfg.listenAddr, mux))
