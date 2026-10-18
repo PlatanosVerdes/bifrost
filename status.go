@@ -53,6 +53,8 @@ type streamStatus struct {
 	Viewers       int       `json:"viewers"`
 	Since         time.Time `json:"since"`
 	StartedAfterS float64   `json:"started_after_s"`
+	Now           *airing   `json:"now,omitempty"`
+	Next          *airing   `json:"next,omitempty"`
 }
 
 // statusBoard is written by both halves and read by the handlers.
@@ -136,6 +138,7 @@ func (h *hub) streamsNow() []streamStatus {
 		if !s.done && s.ok {
 			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source,
 				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS})
+			out[len(out)-1].Now, out[len(out)-1].Next = h.onAir(s.slug)
 		}
 		s.mu.Unlock()
 	}
@@ -174,6 +177,8 @@ type channelInfo struct {
 	IDs      []string      `json:"ids"` // the order the proxy would try them in
 	Playing  *streamStatus `json:"playing,omitempty"`
 	LastOpen *openRecord   `json:"last_open,omitempty"`
+	Now      *airing       `json:"now,omitempty"`
+	Next     *airing       `json:"next,omitempty"`
 }
 
 // serveChannels is the catalog for players that go to the engine directly (farnsworth): each
@@ -199,11 +204,21 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 		out = append(out, channelInfo{Slug: slug, Name: g.Name, Group: extractAttr(g.extinf, "group-title"),
 			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs),
 			LastOpen: h.status.lastOpen(slug)})
+		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
 			out[len(out)-1].Playing = &st
 		}
 	}
 	writeJSON(w, map[string]any{"channels": out})
+}
+
+// onAir is what a channel airs now and next, by the guide id its playlist entry carries.
+func (h *hub) onAir(slug string) (now, next *airing) {
+	g := h.table.group(slug)
+	if g == nil {
+		return nil, nil
+	}
+	return h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 }
 
 // ordered puts the source that last produced video first, as planFor does.

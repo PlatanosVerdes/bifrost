@@ -72,8 +72,8 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /` | The status page: every channel with its state (playing, last open played, left early, failed, not opened yet) and its sources first, then an Activity tab with what is playing, recent opens, and the list and guide. Reads the two API routes below every 10 s |
 | `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
-| `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, and its last open since bifrost started |
-| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
+| `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, its last open since bifrost started, and what it airs now and next by the guide |
+| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, and the programme on air and the next one, from guide.xml), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
