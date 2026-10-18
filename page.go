@@ -1,21 +1,35 @@
 package main
 
 import (
-	_ "embed"
+	"embed"
+	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 )
 
-// The status page: one static file that reads /api/channels and /api/status. Nothing on it opens a
-// channel.
+// The status page: index.html, its Lit components in app.js, and Lit itself under vendor/, pinned
+// and served from here so the page needs nothing but this process. It only reads the API.
 //
-//go:embed web/index.html
-var page []byte
+//go:embed web
+var webFS embed.FS
+
+var webFiles = func() http.Handler {
+	sub, err := fs.Sub(webFS, "web")
+	if err != nil {
+		panic(err)
+	}
+	return http.FileServer(http.FS(sub))
+}()
+
+// isPage says whether a path belongs to the page rather than to a stream.
+func isPage(path string) bool {
+	return path == "/" || path == "/app.js" || strings.HasPrefix(path, "/vendor/")
+}
 
 func servePage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(page)
+	webFiles.ServeHTTP(w, r)
 }
 
 func hostname() string {
