@@ -24,6 +24,12 @@ type listStatus struct {
 	Error      string    `json:"error,omitempty"`
 }
 
+type guideStatus struct {
+	Channels int       `json:"channels"`
+	Bytes    int64     `json:"bytes"`
+	Updated  time.Time `json:"updated"`
+}
+
 type jellyfinStatus struct {
 	LastRefresh time.Time  `json:"last_refresh"`
 	LastCode    int        `json:"last_code"`
@@ -32,6 +38,7 @@ type jellyfinStatus struct {
 
 type openRecord struct {
 	Channel string    `json:"channel"`
+	Slug    string    `json:"slug,omitempty"`
 	Source  string    `json:"source,omitempty"`
 	At      time.Time `json:"at"`
 	Outcome string    `json:"outcome"` // playing, gave_up, abandoned
@@ -52,7 +59,9 @@ type statusBoard struct {
 	mu       sync.Mutex
 	list     listStatus
 	jellyfin jellyfinStatus
+	guide    guideStatus
 	recent   []openRecord
+	last     map[string]openRecord // slug -> that channel's latest open, kept beyond the recent 20
 }
 
 func (b *statusBoard) listRead(channels, sources int, changed bool, err string) {
@@ -66,6 +75,12 @@ func (b *statusBoard) listRead(channels, sources int, changed bool, err string) 
 	if changed {
 		b.list.LastChange = now
 	}
+}
+
+func (b *statusBoard) guideCut(channels int, bytes int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.guide = guideStatus{Channels: channels, Bytes: bytes, Updated: time.Now()}
 }
 
 func (b *statusBoard) refreshed(code int, due time.Time) {
@@ -88,6 +103,22 @@ func (b *statusBoard) opened(r openRecord) {
 	if len(b.recent) > recentOpens {
 		b.recent = b.recent[:recentOpens]
 	}
+	if r.Slug != "" {
+		if b.last == nil {
+			b.last = map[string]openRecord{}
+		}
+		b.last[r.Slug] = r
+	}
+}
+
+func (b *statusBoard) lastOpen(slug string) *openRecord {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r, ok := b.last[slug]
+	if !ok {
+		return nil
+	}
+	return &r
 }
 
 func (h *hub) streamsNow() []streamStatus {
@@ -115,6 +146,8 @@ func (h *hub) serveStatus(w http.ResponseWriter, r *http.Request) {
 	h.status.mu.Lock()
 	body := map[string]any{
 		"version":  buildVersion,
+		"name":     h.name,
+		"guide":    h.status.guide,
 		"list":     h.status.list,
 		"jellyfin": h.status.jellyfin,
 		"recent":   append([]openRecord{}, h.status.recent...),
@@ -132,12 +165,14 @@ func (h *hub) serveStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type channelInfo struct {
-	Slug  string   `json:"slug"`
-	Name  string   `json:"name"`
-	Group string   `json:"group"`
-	Logo  string   `json:"logo"`
-	TvgID string   `json:"tvg_id"`
-	IDs   []string `json:"ids"` // the order the proxy would try them in
+	Slug     string        `json:"slug"`
+	Name     string        `json:"name"`
+	Group    string        `json:"group"`
+	Logo     string        `json:"logo"`
+	TvgID    string        `json:"tvg_id"`
+	IDs      []string      `json:"ids"` // the order the proxy would try them in
+	Playing  *streamStatus `json:"playing,omitempty"`
+	LastOpen *openRecord   `json:"last_open,omitempty"`
 }
 
 // serveChannels is the catalog for players that go to the engine directly (farnsworth): each
@@ -148,6 +183,12 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 	groups := h.table.groups
 	h.table.mu.RUnlock()
 
+	playing := map[string]streamStatus{}
+	for _, st := range h.streamsNow() {
+		if st.Slug != "" {
+			playing[st.Slug] = st
+		}
+	}
 	out := make([]channelInfo, 0, len(order))
 	for _, slug := range order {
 		g := groups[slug]
@@ -155,7 +196,11 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out = append(out, channelInfo{Slug: slug, Name: g.Name, Group: extractAttr(g.extinf, "group-title"),
-			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs)})
+			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs),
+			LastOpen: h.status.lastOpen(slug)})
+		if st, ok := playing[slug]; ok {
+			out[len(out)-1].Playing = &st
+		}
 	}
 	writeJSON(w, map[string]any{"channels": out})
 }

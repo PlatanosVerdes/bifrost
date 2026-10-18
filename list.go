@@ -372,6 +372,9 @@ func (l *lister) run() {
 				log.Printf("error trimming the guide: %v", err)
 			} else {
 				l.guideIDs = ids
+				if st, err := os.Stat(guide); err == nil {
+					l.board().guideCut(len(ids), st.Size())
+				}
 				if guideChanged {
 					log.Printf("Guide: cut down to %d channels", len(ids))
 					changed = true

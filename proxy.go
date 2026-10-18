@@ -47,6 +47,7 @@ type hub struct {
 	status   *statusBoard
 
 	jellyfinURL, jellyfinKey string // only for /api/status to ask how Jellyfin is playing
+	name                     string // the machine, shown on the page
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -259,7 +260,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 			outcome = "gave_up"
 			log.Printf("[proxy] %s gave up, no source produced video in %s", s.label, time.Since(start).Round(time.Second))
 		}
-		s.h.status.opened(openRecord{Channel: s.label, At: start, Outcome: outcome, Seconds: int(time.Since(start).Seconds())})
+		s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, At: start, Outcome: outcome, Seconds: int(time.Since(start).Seconds())})
 		close(s.ready)
 		return
 	}
@@ -269,7 +270,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	s.mu.Lock()
 	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), int(time.Since(start).Seconds())
 	s.mu.Unlock()
-	s.h.status.opened(openRecord{Channel: s.label, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
+	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
 	s.ok, s.header = true, resp.Header.Clone()
 	close(s.ready)
 	s.broadcast(first)
