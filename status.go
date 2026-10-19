@@ -44,6 +44,7 @@ type openRecord struct {
 	At      time.Time `json:"at"`
 	Outcome string    `json:"outcome"` // playing, gave_up, abandoned
 	Seconds float64   `json:"seconds"`
+	Device  string    `json:"device,omitempty"`
 }
 
 type streamStatus struct {
@@ -111,6 +112,49 @@ func (b *statusBoard) opened(r openRecord) {
 			b.last = map[string]openRecord{}
 		}
 		b.last[r.Slug] = r
+	}
+}
+
+func (b *statusBoard) setDevice(at time.Time, device string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.recent {
+		if b.recent[i].At.Equal(at) {
+			b.recent[i].Device = device
+		}
+	}
+	for slug, r := range b.last {
+		if r.At.Equal(at) {
+			r.Device = device
+			b.last[slug] = r
+		}
+	}
+}
+
+// deviceChecks are when, after an open plays, bifrost asks Jellyfin who is watching it: Jellyfin
+// probes the stream for a few seconds before its session names the channel.
+var deviceChecks = []time.Duration{10 * time.Second, 20 * time.Second, 30 * time.Second}
+
+// noteDevice records which Jellyfin client played an open. A player that went to bifrost directly
+// has no Jellyfin session and keeps no device.
+func (h *hub) noteDevice(at time.Time, label string) {
+	if h.jellyfinURL == "" {
+		return
+	}
+	waited := time.Duration(0)
+	for _, check := range deviceChecks {
+		time.Sleep(check - waited)
+		waited = check
+		playing, err := jellyfinSessions(h.jellyfinURL, h.jellyfinKey)
+		if err != nil {
+			continue
+		}
+		for _, p := range playing {
+			if strings.HasPrefix(label, p.Channel) {
+				h.status.setDevice(at, p.Device+" · "+p.Client)
+				return
+			}
+		}
 	}
 }
 

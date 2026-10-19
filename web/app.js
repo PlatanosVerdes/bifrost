@@ -7,7 +7,7 @@ const REFRESH_MS = 10000;
 // --- formatting, shared by every component ---------------------------------------------------
 
 const known = (t) => { const d = new Date(t); return !isNaN(d) && d.getFullYear() > 2000 ? d : null; };
-const hhmm = (t) => known(t)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) ?? "";
+const hhmm = (t) => known(t)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) ?? "";
 const ago = (t) => {
   const d = known(t);
   if (!d) return "never";
@@ -28,7 +28,7 @@ function channelState(channel, jellyfin) {
   }
   const o = channel.last_open;
   if (!o) return { tone: "none", text: "Not opened yet" };
-  if (o.outcome === "playing") return { tone: "ok", text: `Played at ${hhmm(o.at)} · first video in ${secs(o.seconds)}` };
+  if (o.outcome === "playing") return { tone: "ok", text: `Played at ${hhmm(o.at)}${o.device ? ` on ${o.device}` : ""} · first video in ${secs(o.seconds)}` };
   if (o.outcome === "gave_up") return { tone: "bad", text: `No source played at ${hhmm(o.at)} (${secs(o.seconds)})` };
   return { tone: "warn", text: `Left before it started at ${hhmm(o.at)} (${secs(o.seconds)})` };
 }
@@ -153,6 +153,9 @@ class ActivityView extends LitElement {
     li:first-child { border-top: 0; padding-top: 0; }
     .at { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
     .ch { font-weight: 600; min-width: 0; }
+    .dev { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+    .source { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+    .source:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .res { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
     .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
@@ -173,11 +176,24 @@ class ActivityView extends LitElement {
     return streams.map((st) => {
       const jf = jellyfin.find((p) => st.channel.startsWith(p.channel));
       return html`<div class="row">${this.screen(true)}<div>
-        <b>${st.channel}</b>${jf ? html`<span class="tag ${jf.video === "copy" ? "copy" : "trans"}">${jf.video === "copy" ? "copy" : "re-encode"}</span>` : nothing}${jf?.speed ? html`<span class="tag ${jf.speed >= 0.95 ? "copy" : "slow"}" title="Jellyfin's speed against live: below 1x it falls behind and the picture stalls">${jf.speed.toFixed(2)}x</span>` : nothing}
+        <b>${st.channel}</b>${jf ? (jf.video === "copy"
+          ? html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`
+          : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}
         ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
-        <p>Source ${(st.source || "").slice(0, 8)} · ${st.viewers} watching · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
+        <p>Source ${this.source(st.source)} · ${st.viewers} watching${jf ? ` on ${jf.device} · ${jf.client}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
       </div></div>`;
     });
+  }
+
+  // The short id copies a link to that one source, for a player that is not Jellyfin, like VLC.
+  source(id) {
+    if (!id) return "";
+    const copy = async (e) => {
+      await navigator.clipboard.writeText(`${location.origin}/ace/getstream?id=${id}`);
+      e.target.textContent = "link copied";
+      setTimeout(() => { e.target.textContent = `${id.slice(0, 8)}…`; }, 1500);
+    };
+    return html`<button class="source mono" title="${id} · click to copy a link VLC can play" @click=${copy}>${id.slice(0, 8)}…</button>`;
   }
 
   recent() {
@@ -186,7 +202,9 @@ class ActivityView extends LitElement {
     return recent.map((r) => {
       const tone = r.outcome === "playing" ? "ok" : r.outcome === "gave_up" ? "bad" : "warn";
       const res = r.outcome === "playing" ? secs(r.seconds) : r.outcome === "gave_up" ? "no video" : "left early";
-      return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone}">${res}</span></li>`;
+      const title = r.outcome === "playing" ? `first video after ${secs(r.seconds)}` : `gave up after ${secs(r.seconds)}`;
+      return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone}" title="${title}">${res}</span>
+        ${r.device ? html`<span class="dev">${r.device}</span>` : nothing}</li>`;
     });
   }
 
@@ -204,7 +222,9 @@ class ActivityView extends LitElement {
             <dt>List</dt><dd>read ${ago(l.last_read)}${known(l.last_change) ? `; changed ${ago(l.last_change)}` : ""}${l.error ? html` · <span class="bad">${l.error}</span>` : nothing}</dd>
             <dt>Guide</dt><dd>${g.bytes ? `${Math.round(g.bytes / 1024)} KB for ${g.channels} channels` : "not cut yet"}</dd>
             <dt>Jellyfin</dt>${j.last_code
-              ? html`<dd class="${j.last_code === 204 ? "ok" : "bad"}">reread the guide ${ago(j.last_refresh)} (${j.last_code})</dd>`
+              ? j.last_code === 204
+                ? html`<dd class="ok">reread the guide ${ago(j.last_refresh)}</dd>`
+                : html`<dd class="bad">guide refresh failed ${ago(j.last_refresh)} (HTTP ${j.last_code})</dd>`
               : html`<dd>no refresh asked yet</dd>`}
             ${j.refresh_due ? html`<dt>Next</dt><dd>refresh due at ${hhmm(j.refresh_due)}</dd>` : nothing}
           </dl>
