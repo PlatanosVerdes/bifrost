@@ -176,7 +176,9 @@ class ActivityView extends LitElement {
     return streams.map((st) => {
       const jf = jellyfin.find((p) => st.channel.startsWith(p.channel));
       return html`<div class="row">${this.screen(true)}<div>
-        <b>${st.channel}</b>${jf ? html`<span class="tag ${jf.video === "copy" ? "copy" : "trans"}">${jf.video === "copy" ? "copy" : "re-encode"}</span>` : nothing}${jf?.speed ? html`<span class="tag ${jf.speed >= 0.95 ? "copy" : "slow"}" title="Jellyfin's speed against live: below 1x it falls behind and the picture stalls">${jf.speed.toFixed(2)}x</span>` : nothing}
+        <b>${st.channel}</b>${jf ? (jf.video === "copy"
+          ? html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`
+          : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}
         ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
         <p>Source ${this.source(st.source)} · ${st.viewers} watching${jf ? ` on ${jf.device} · ${jf.client}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}</p>
       </div></div>`;
