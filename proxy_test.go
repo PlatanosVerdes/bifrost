@@ -369,6 +369,48 @@ func TestStatusAsksJellyfinHowItPlays(t *testing.T) {
 	}
 }
 
+// An open remembers which Jellyfin client played it, once Jellyfin's session names the channel.
+func TestOpenRecordsTheJellyfinDevice(t *testing.T) {
+	jf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+		 {"Client":"Jellyfin Web","DeviceName":"Firefox","NowPlayingItem":{"Name":"Some film","Type":"Movie"}},
+		 {"Client":"Jellyfin Web","DeviceName":"Chrome","NowPlayingItem":{"Name":"Channel A 1080p","Type":"TvChannel"}}]`))
+	}))
+	defer jf.Close()
+	checks := deviceChecks
+	deviceChecks = []time.Duration{10 * time.Millisecond}
+	defer func() { deviceChecks = checks }()
+	srv, h := newStatusProxy(t, &perIDEngine{}, twoSources...)
+	h.jellyfinURL, h.jellyfinKey = jf.URL, "k"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/channel-a-1080p", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.ReadAtLeast(resp.Body, make([]byte, 8192), 8192)
+
+	var st struct {
+		Recent []openRecord `json:"recent"`
+	}
+	for i := 0; i < 50; i++ {
+		getJSON(t, srv.URL+"/api/status", &st)
+		if len(st.Recent) == 1 && st.Recent[0].Device != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(st.Recent) != 1 || st.Recent[0].Device != "Chrome · Jellyfin Web" {
+		t.Errorf("recent = %+v, want the open played on Chrome", st.Recent)
+	}
+	if last := h.status.lastOpen("channel-a-1080p"); last == nil || last.Device != "Chrome · Jellyfin Web" {
+		t.Errorf("last open = %+v, want the device too", last)
+	}
+}
+
 func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
 	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true, twoSources[1]: true}}
 	srv, _ := newStatusProxy(t, engine, twoSources...)
