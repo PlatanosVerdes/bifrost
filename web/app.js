@@ -283,7 +283,6 @@ class BifrostApp extends LitElement {
       const [status, channels] = await Promise.all([
         fetch("api/status").then((r) => r.json()), fetch("api/channels").then((r) => r.json())]);
       this.status = status; this.channels = channels.channels || []; this.reachable = true;
-      document.title = `bifrost · ${status.name || ""}`;
     } catch {
       this.reachable = false;
     }
