@@ -7,7 +7,7 @@ const REFRESH_MS = 10000;
 // --- formatting, shared by every component ---------------------------------------------------
 
 const known = (t) => { const d = new Date(t); return !isNaN(d) && d.getFullYear() > 2000 ? d : null; };
-const hhmm = (t) => known(t)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) ?? "";
+const hhmm = (t) => known(t)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) ?? "";
 const ago = (t) => {
   const d = known(t);
   if (!d) return "never";
