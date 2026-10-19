@@ -284,6 +284,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), tenths(time.Since(start))
 	s.mu.Unlock()
 	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
+	go s.h.noteDevice(start, s.label)
 	s.ok, s.header = true, resp.Header.Clone()
 	close(s.ready)
 	s.broadcast(first)
