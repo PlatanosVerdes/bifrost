@@ -32,6 +32,16 @@ const swarm = (sw) => {
   return html` · <span class=${short ? "bad" : ""} title=${title}>${plural(sw.peers, "peer")} · ${speeds}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
 };
 
+// The last time a starving stream moved to another source, or why it stayed on the one it has.
+const switched = (st) => {
+  const sw = st.last_switch, pr = st.last_probe;
+  if (sw && (!pr || pr.outcome === "switched")) {
+    return html`<p class="muted">Switched from ${sw.from.slice(0, 8)}… at ${hhmm(sw.at)} · ${sw.headroom_before.toFixed(2)}x to ${sw.headroom_after.toFixed(2)}x</p>`;
+  }
+  if (pr) return html`<p class="muted">Tried ${pr.source.slice(0, 8)}… at ${hhmm(pr.at)}, kept this one: ${pr.reason}</p>`;
+  return nothing;
+};
+
 // What a channel's dot and line say: playing now, else its last open since bifrost started.
 function channelState(channel, jellyfin) {
   if (channel.playing) {
@@ -174,6 +184,7 @@ class ActivityView extends LitElement {
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
     .tag.trans { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
     .tag.slow { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+    .tag.probe { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
   screen(on) {
@@ -191,9 +202,10 @@ class ActivityView extends LitElement {
       return html`<div class="row">${this.screen(true)}<div>
         <b>${st.channel}</b>${jf ? (jf.video === "copy"
           ? html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`
-          : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${st.swarm?.starving ? html`<span class="tag slow" title="The engine has downloaded less than the stream plays for a while: its buffer is draining">swarm too slow · ${st.swarm.headroom.toFixed(2)}x</span>` : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}
+          : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${st.swarm?.starving ? html`<span class="tag slow" title="The engine has downloaded less than the stream plays for a while: its buffer is draining">swarm too slow · ${st.swarm.headroom.toFixed(2)}x</span>` : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title="Measuring another source of the channel next to this one, to move to it if it is clearly better">trying ${st.probing_source.slice(0, 8)}…</span>` : nothing}
         ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
         <p>Source ${this.source(st.source)} · ${st.viewers} watching${jf ? ` on ${jf.device} · ${jf.client}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}${swarm(st.swarm)}</p>
+        ${switched(st)}
       </div></div>`;
     });
   }

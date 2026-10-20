@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +53,13 @@ type hub struct {
 	name                     string // the machine, shown on the page
 	schedule                 *schedule
 	swarmEvery               time.Duration
+
+	policy    switchPolicy
+	probing   string                          // the slug probing another source: one probe at a time, Pi-wide
+	lastProbe map[string]time.Time            // slug -> when its last probe ended
+	probedAt  map[string]map[string]time.Time // slug -> content id -> when it was last probed
+	switches  map[string]int                  // slug -> source switches since bifrost started
+	probes    atomic.Int64
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -83,14 +91,31 @@ type stream struct {
 	playingSince  time.Time
 	startedAfterS float64
 
+	ctx        context.Context
+	headers    http.Header
+	handover   chan handover
+	probing    string // the content id being probed
+	lastProbe  *probeRecord
+	lastSwitch *switchRecord
+	switches   int
+
 	relayed atomic.Int64
-	swarm   swarm
+	swarm   *swarm
 }
 
 func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
-		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
-		schedule: &schedule{}, swarmEvery: 5 * time.Second}
+		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
+		schedule: &schedule{}, swarmEvery: 5 * time.Second, policy: defaultPolicy, lastProbe: map[string]time.Time{},
+		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}}
+}
+
+// The engine answers its redirects with no length and keeps the connection open, so a redirect on
+// a reused connection waits for a body that never ends: each open gets a connection of its own.
+func engineTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	return t
 }
 
 func (h *hub) planFor(r *http.Request) (plan, bool) {
@@ -220,12 +245,12 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
-		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel}
-	h.streams[p.key] = s
-
 	headers := r.Header.Clone()
 	headers.Del("Range") // live: there is nothing to seek to, and joiners never asked for it
+	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
+		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel, ctx: ctx, headers: headers,
+		handover: make(chan handover), swarm: &swarm{threshold: h.policy.starvingBelow}}
+	h.streams[p.key] = s
 	go s.run(ctx, p, headers)
 	return s, viewer, false
 }
@@ -282,8 +307,6 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 		close(s.ready)
 		return
 	}
-	defer resp.Body.Close()
-
 	log.Printf("[proxy] %s playing after %.1fs", s.label, tenths(time.Since(start)))
 	s.mu.Lock()
 	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), tenths(time.Since(start))
@@ -292,25 +315,36 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	go s.h.noteDevice(start, s.label)
 	s.ok, s.header = true, resp.Header.Clone()
 	close(s.ready)
-	s.broadcast(first)
-	s.relayed.Add(int64(len(first)))
-	if url := statURL(resp); url != "" {
-		go s.watchSwarm(ctx, url)
+	up := feed(ctx, chosen, resp, first)
+	if up.stat != "" {
+		go s.watchSwarm(up.ctx, up.stat, s.swarm)
 	}
+	s.relay(ctx, up, start)
+}
 
+// relay hands the source's chunks to the viewers, packet-aligned, until a probe hands over a better
+// source: from then on the same viewers get that one, and the old session is closed.
+func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
+	align := &tsAligner{}
 	for {
-		// Whole chunks, so the backlog is the 8 MB it claims: the engine's reads come in a few KB at
-		// a time, and 256 of those filled in the opening burst and dropped the TV the second it began.
-		buf := make([]byte, chunkSize)
-		n, err := io.ReadFull(resp.Body, buf)
-		if n > 0 {
-			s.broadcast(buf[:n])
-			s.relayed.Add(int64(n))
-		}
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("[proxy] %s engine stream ended after %s: %v", s.label, time.Since(start).Round(time.Second), err)
+		select {
+		case chunk, open := <-up.chunks:
+			if !open {
+				if ctx.Err() == nil {
+					log.Printf("[proxy] %s engine stream ended after %s: %v", s.label, time.Since(start).Round(time.Second), up.err)
+				}
+				up.cancel()
+				return
 			}
+			if out := align.push(chunk); len(out) > 0 {
+				s.broadcast(out)
+				s.relayed.Add(int64(len(out)))
+			}
+		case next := <-s.handover:
+			s.switchTo(up, next)
+			up, align = next.up, &tsAligner{dropLead: true}
+		case <-ctx.Done():
+			up.cancel()
 			return
 		}
 	}
@@ -491,6 +525,16 @@ func getduration(key string, def time.Duration) time.Duration {
 			return d
 		}
 		log.Printf("[proxy] %s=%q is not a duration, using %s", key, v, def)
+	}
+	return def
+}
+
+func getfloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+		log.Printf("[proxy] %s=%q is not a number, using %g", key, v, def)
 	}
 	return def
 }

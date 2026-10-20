@@ -61,6 +61,10 @@ bifrost:
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
 | `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
+| `SWITCH_AFTER` | `30s` | How long a stream starves before another source is probed; `0` turns switching off |
+| `PROBE_FOR`, `PROBE_COOLDOWN` | `20s`, `3m` | How long a probed source is measured; the wait between two probes of a channel |
+| `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](#moving-to-a-better-source)) |
+| `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
 (as Jellyfin sees those paths).
@@ -73,7 +77,7 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
 | `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, its last open since bifrost started, and what it airs now and next by the guide |
-| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, the programme on air and the next one, from guide.xml, and its `swarm`, see below), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
+| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, the programme on air and the next one, from guide.xml, its `swarm`, and whether it is probing another source, how often it switched and its last switch and probe, see below), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
@@ -114,10 +118,61 @@ The page shows it in KB/s next to the channel (`12 peers · 850/820 KB/s`), red 
 log says when a channel starts and stops starving. The same numbers are pushed per channel slug
 under their own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each
 other: `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`,
-`_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving` and
-`_stalls_total`, all labelled `channel="<slug>"`. A dashboard that filters on
+`_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving`,
+`_stalls_total` and `_source_switches_total` (since bifrost started), all labelled `channel="<slug>"`. A dashboard that filters on
 `job="acestream_updater"` has to take in `acestream_streams` too to see them. A channel nobody
 watches any more drops out of the group.
+
+### Moving to a better source
+
+A channel's sources do not degrade together. In the same broadcast the playing source sat at
+0.65–0.95x of its bitrate for minutes, and the TV cut out or lost its audio, while another source
+of the same channel downloaded twice that. So a stream that keeps starving moves its viewers to a
+better source of its channel, under rules meant never to leave them with nothing:
+
+- **Only when it has starved for a while.** A probe starts once the stream has been starving (see
+  above) for `SWITCH_AFTER`, so after about 45 s of a download under the bitrate, never while it
+  keeps up.
+- **One probe at a time, on the whole machine, and rarely.** The probe is a second engine session
+  for the candidate's content id, next to the one playing. It lasts the open (at most 15 s) plus
+  `PROBE_FOR`, and the channel waits `PROBE_COOLDOWN` after it before another. Candidates are
+  taken in turn: one never probed first, else the one probed longest ago. The probe asks the engine
+  with a `pid` of its own: the engine stops a player's previous download when it starts a new one,
+  and without a pid a player is its address, so the first probe stopped the very stream it was
+  meant to rescue.
+- **Measured, not guessed.** The candidate is polled like the playing source, and its video is
+  read and thrown away meanwhile, so the engine serves it as it would a player. Its first sample,
+  the engine filling its opening buffer flat out, is left out; the rest still show more what its
+  swarm can give than the rate it will settle at, which on a live stream is close to 1x. Its
+  headroom is its download over the channel's measured bitrate, or its own if higher (sources of
+  one channel can differ: one measured 470 KB/s, another 850), against the playing source's
+  average over the last `SWITCH_AFTER`.
+- **Clearly better or nothing.** It is switched to when it keeps up, at `SWITCH_MIN_HEADROOM` (1.1x)
+  or more, and beats the playing source by `SWITCH_MARGIN` (0.2). When no source keeps up, the
+  least bad one is taken only by twice that margin: 0.95x is worth leaving 0.5x for, not 0.7x. A
+  candidate with fewer than half the playing source's peers needs one margin more. One that
+  stalled in its last sample, gave fewer than two usable samples, or a playing source that
+  recovered meanwhile, keeps the stream where it is.
+- **The playing source is not touched until the new one delivers.** The candidate takes over
+  between two chunks: the viewers stay connected and get the new source's packets from its first
+  TS sync on. The relay hands out whole 188-byte packets, so the cut never falls inside one. The
+  picture jumps (another source is at another point of the broadcast), which beats a stall. Only then
+  is the old session closed, and the new source becomes the channel's last good one.
+- **A probe that fails changes nothing.** One that never opens, sends no video, ends, or is not
+  better is closed, and the reason is logged and kept in the stream's `last_probe`.
+
+The log says each step: `probing <id>` with the playing source's numbers, `[swarm] … probe <id>:
+1.85x, 24 peers over 3 samples; playing <id>: 0.71x`, and then `switched <old> -> <new>, headroom
+0.71x -> 1.85x` or `kept <id>: probe <id> not clearly better…`. Each playing stream in
+`/api/status` carries:
+
+| Field | What it is |
+| :--- | :--- |
+| `source` | The content id playing now |
+| `probing`, `probing_source` | Whether another source is being measured, and which |
+| `switches` | Times this stream moved to another source |
+| `last_switch` | When, from and to which source, why, and the headroom before and after |
+| `last_probe` | The last probe: when, which source, `switched` or `kept`, why, and both readings |
 
 ## Rules that look odd and must stay
 
@@ -126,7 +181,9 @@ Each one was learnt by breaking it.
 **Nothing opens a channel on its own.** No health checks, no warm-up, no probing at refresh time.
 A Raspberry Pi plays one channel; a second connection to the engine saturates it, and a probe of a
 channel someone is watching takes the engine away from them. Sources are tried only when someone
-opens the channel, one after another, never two at once.
+opens the channel, one after another, never two at once. The one exception is a stream that has
+been starving for a while: it may measure one other source of its channel at a time, for a bounded
+time, rarely (see [Moving to a better source](#moving-to-a-better-source)).
 
 **One engine connection per channel, shared.** Jellyfin opens every live channel twice at once, one
 connection to play and one to probe the codecs. The engine serves a channel to one connection, so
@@ -145,6 +202,10 @@ made each rotation a new channel, a deleted old one, and a guide refresh. The ca
 
 **The catalog is replaced whole every pass.** An id the list dropped is gone at once. The only thing
 kept over is a channel someone is watching right now, so Jellyfin does not delete it under them.
+
+**Each open gets a connection of its own.** The engine answers its redirects with no length and
+keeps the connection open, so a redirect sent over a connection kept alive from an earlier request
+(the swarm's stat polls) waits for a body that never ends. Opens to the engine never reuse one.
 
 **Refresh Guide is found by its key.** Task ids are an MD5 of the class name. The hard-coded id this
 replaced was Refresh Channels (internet channels), which Jellyfin accepted with a 204 and which never
