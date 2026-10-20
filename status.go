@@ -48,14 +48,15 @@ type openRecord struct {
 }
 
 type streamStatus struct {
-	Channel       string    `json:"channel"`
-	Slug          string    `json:"slug,omitempty"`
-	Source        string    `json:"source,omitempty"`
-	Viewers       int       `json:"viewers"`
-	Since         time.Time `json:"since"`
-	StartedAfterS float64   `json:"started_after_s"`
-	Now           *airing   `json:"now,omitempty"`
-	Next          *airing   `json:"next,omitempty"`
+	Channel       string       `json:"channel"`
+	Slug          string       `json:"slug,omitempty"`
+	Source        string       `json:"source,omitempty"`
+	Viewers       int          `json:"viewers"`
+	Since         time.Time    `json:"since"`
+	StartedAfterS float64      `json:"started_after_s"`
+	Now           *airing      `json:"now,omitempty"`
+	Next          *airing      `json:"next,omitempty"`
+	Swarm         *swarmStatus `json:"swarm,omitempty"`
 }
 
 // statusBoard is written by both halves and read by the handlers.
@@ -181,7 +182,7 @@ func (h *hub) streamsNow() []streamStatus {
 		s.mu.Lock()
 		if !s.done && s.ok {
 			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source,
-				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS})
+				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status()})
 			out[len(out)-1].Now, out[len(out)-1].Next = h.onAir(s.slug)
 		}
 		s.mu.Unlock()
