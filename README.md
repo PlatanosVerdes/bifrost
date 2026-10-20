@@ -103,18 +103,20 @@ Each playing stream in `/api/status` carries a `swarm`:
 | :--- | :--- |
 | `status` | The engine's state: `dl` while it downloads, `prebuf` while it refills its buffer |
 | `peers` | Peers the engine is connected to |
-| `speed_down_kbps`, `speed_up_kbps` | The engine's rates, in KB/s (KiB, as the engine counts them) |
-| `bitrate_kbps` | The stream's rate in the same unit, once a few seconds have played |
+| `download_bytes_per_second`, `upload_bytes_per_second` | The engine's rates (it counts in KiB/s; these are ×1024) |
+| `bitrate_bytes_per_second` | The stream's rate, once ten seconds have played |
 | `headroom` | Download over bitrate. Below 1 the buffer drains |
 | `starving` | The download has been under the bitrate for three samples in a row (15 s) |
 | `stalls` | Times the engine left `dl` since the stream started |
 | `sampled_at`, `unavailable` | When the engine last answered, and why the last ask failed, if it did |
 
-The page shows it next to the channel (`12 peers · 850/820 KB/s`), red below 1, and the log says
-when a channel starts and stops starving. The same numbers are pushed per channel slug under their
-own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each other:
-`acestream_stream_viewers`, `_peers`, `_speed_down_kbps`, `_speed_up_kbps`, `_bitrate_kbps`,
-`_headroom`, `_starving` and `_stalls_total`, all labelled `channel="<slug>"`. A channel nobody
+The page shows it in KB/s next to the channel (`12 peers · 850/820 KB/s`), red below 1, and the
+log says when a channel starts and stops starving. The same numbers are pushed per channel slug
+under their own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each
+other: `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`,
+`_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving` and
+`_stalls_total`, all labelled `channel="<slug>"`. A dashboard that filters on
+`job="acestream_updater"` has to take in `acestream_streams` too to see them. A channel nobody
 watches any more drops out of the group.
 
 ## Rules that look odd and must stay

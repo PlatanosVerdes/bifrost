@@ -55,7 +55,7 @@ func TestBitrateFollowsTheLivePosition(t *testing.T) {
 		starving = append(starving, at(s, "dl", 574, 820, 0.7))
 	}
 	for name, samples := range map[string][]swarmSample{"keeping up": keeping, "starving": starving} {
-		if got := bitrate(samples); got < 815 || got > 825 {
+		if got := bitrate(samples) / 1024; got < 815 || got > 825 {
 			t.Errorf("%s: bitrate %.0f KiB/s, want 820", name, got)
 		}
 	}
@@ -66,8 +66,8 @@ func TestBitrateFollowsTheLivePosition(t *testing.T) {
 
 	leapt := append([]swarmSample(nil), keeping...)
 	leapt[len(leapt)-1].pos += 120
-	if got := bitrate(leapt); got < 815 || got > 825 {
-		t.Errorf("bitrate after the engine skipped to live = %.0f, want wall time used instead (820)", got)
+	if got := bitrate(leapt) / 1024; got < 815 || got > 825 {
+		t.Errorf("bitrate after the engine skipped to live = %.0f KiB/s, want wall time used instead (820)", got)
 	}
 }
 
@@ -76,7 +76,7 @@ func TestStarvingNeedsASustainedShortfall(t *testing.T) {
 	for s := 0.0; s <= 15; s += 5 {
 		w.add(at(s, "dl", 850, 820, 1))
 	}
-	if st := w.status(); st.Starving || st.Headroom != 1.04 || st.Bitrate != 820 || st.Peers != 12 {
+	if st := w.status(); st.Starving || st.Headroom != 1.04 || st.Bitrate != 820*1024 || st.Download != 850*1024 || st.Peers != 12 {
 		t.Fatalf("keeping up: %+v", st)
 	}
 
@@ -108,12 +108,15 @@ func TestStallsCountLeavingDownload(t *testing.T) {
 
 func TestSwarmMetricsPerChannel(t *testing.T) {
 	out := string(swarmMetrics([]streamStatus{
-		{Slug: "m-plus-liga-de-campeones-1080p", Viewers: 1, Swarm: &swarmStatus{Peers: 12, SpeedDown: 640, Bitrate: 800,
-			Headroom: 0.8, Starving: true, Stalls: 3, SampledAt: time.Now()}},
+		{Slug: "m-plus-liga-de-campeones-1080p", Viewers: 1, Swarm: &swarmStatus{Peers: 12, Download: 640 * 1024,
+			Upload: 1557 * 1024, Bitrate: 800 * 1024, Headroom: 0.8, Starving: true, Stalls: 3, SampledAt: time.Now()}},
 		{Slug: "dazn-1-1080p", Viewers: 1},
 	}))
 	for _, want := range []string{
 		`acestream_stream_peers{channel="m-plus-liga-de-campeones-1080p"} 12`,
+		`acestream_stream_download_bytes_per_second{channel="m-plus-liga-de-campeones-1080p"} 655360`,
+		`acestream_stream_upload_bytes_per_second{channel="m-plus-liga-de-campeones-1080p"} 1594368`,
+		`acestream_stream_bitrate_bytes_per_second{channel="m-plus-liga-de-campeones-1080p"} 819200`,
 		`acestream_stream_headroom{channel="m-plus-liga-de-campeones-1080p"} 0.8`,
 		`acestream_stream_starving{channel="m-plus-liga-de-campeones-1080p"} 1`,
 		"# TYPE acestream_stream_stalls_total counter\nacestream_stream_stalls_total{channel=\"m-plus-liga-de-campeones-1080p\"} 3",
@@ -170,7 +173,7 @@ func TestStatusShowsTheSwarmOfWhatIsPlaying(t *testing.T) {
 		getJSON(t, srv.URL+"/api/status", &st)
 		return len(st.Streams) == 1 && st.Streams[0].Swarm != nil && st.Streams[0].Swarm.Peers > 0
 	})
-	if sw := st.Streams[0].Swarm; sw.Status != "dl" || sw.Peers != 38 || sw.SpeedDown != 641 || sw.Unavailable != "" {
+	if sw := st.Streams[0].Swarm; sw.Status != "dl" || sw.Peers != 38 || sw.Download != 641*1024 || sw.Upload != 1557*1024 || sw.Unavailable != "" {
 		t.Errorf("swarm = %+v", sw)
 	}
 	if n := engine.opened.Load(); n != 1 {

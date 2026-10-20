@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,9 +92,9 @@ type swarmSample struct {
 type swarmStatus struct {
 	Status      string    `json:"status"`
 	Peers       int       `json:"peers"`
-	SpeedDown   int       `json:"speed_down_kbps"`
-	SpeedUp     int       `json:"speed_up_kbps"`
-	Bitrate     int       `json:"bitrate_kbps,omitempty"`
+	Download    int64     `json:"download_bytes_per_second"`
+	Upload      int64     `json:"upload_bytes_per_second"`
+	Bitrate     int64     `json:"bitrate_bytes_per_second,omitempty"`
 	Headroom    float64   `json:"headroom,omitempty"` // download over bitrate: below 1 the buffer drains
 	Starving    bool      `json:"starving"`
 	Stalls      int       `json:"stalls"`
@@ -124,7 +125,7 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 		w.samples = w.samples[len(w.samples)-swarmHistory:]
 	}
 	wasStarving := w.below >= starvingAfter
-	if rate := bitrate(w.samples); rate > 0 && float64(s.stat.SpeedDown) < rate {
+	if rate := bitrate(w.samples); rate > 0 && float64(s.stat.SpeedDown*kib) < rate {
 		w.below++
 	} else {
 		w.below = 0
@@ -149,17 +150,17 @@ func (w *swarm) status() *swarmStatus {
 		return &swarmStatus{Unavailable: w.lastErr}
 	}
 	last := w.samples[len(w.samples)-1]
-	st := &swarmStatus{Status: last.stat.Status, Peers: last.stat.Peers, SpeedDown: last.stat.SpeedDown,
-		SpeedUp: last.stat.SpeedUp, Starving: w.below >= starvingAfter, Stalls: w.stalls, SampledAt: last.at,
+	st := &swarmStatus{Status: last.stat.Status, Peers: last.stat.Peers, Download: int64(last.stat.SpeedDown) * kib,
+		Upload: int64(last.stat.SpeedUp) * kib, Starving: w.below >= starvingAfter, Stalls: w.stalls, SampledAt: last.at,
 		Unavailable: w.lastErr}
 	if rate := bitrate(w.samples); rate > 0 {
-		st.Bitrate = int(math.Round(rate))
-		st.Headroom = math.Round(float64(last.stat.SpeedDown)/rate*100) / 100
+		st.Bitrate = int64(math.Round(rate))
+		st.Headroom = math.Round(float64(st.Download)/rate*100) / 100
 	}
 	return st
 }
 
-// bitrate is the stream's rate in KiB/s: the bytes relayed over the last minute, divided by how far
+// bitrate is the stream's rate in bytes per second: the bytes relayed over the last minute, divided by how far
 // the engine's live position moved in it. Wall time would do while the swarm keeps up, but a
 // starving engine relays slower than the stream plays, and the bitrate would sink with the download.
 func bitrate(samples []swarmSample) float64 {
@@ -183,7 +184,7 @@ func bitrate(samples []swarmSample) float64 {
 	if moved := last.pos - first.pos; first.pos > 0 && moved > 0 && moved <= wall+5 {
 		seconds = moved
 	}
-	return float64(last.relayed-first.relayed) / seconds / kib
+	return float64(last.relayed-first.relayed) / seconds
 }
 
 // watchSwarm polls the engine's stat for as long as the stream runs.
@@ -209,9 +210,9 @@ func (s *stream) watchSwarm(ctx context.Context, url string) {
 		st := s.swarm.status()
 		switch {
 		case starving:
-			log.Printf("[swarm] %s starving: %d of %d KB/s, %d peers", s.label, st.SpeedDown, st.Bitrate, st.Peers)
+			log.Printf("[swarm] %s starving: %d of %d KB/s, %d peers", s.label, st.Download/kib, st.Bitrate/kib, st.Peers)
 		case recovered:
-			log.Printf("[swarm] %s keeps up again: %d of %d KB/s, %d peers", s.label, st.SpeedDown, st.Bitrate, st.Peers)
+			log.Printf("[swarm] %s keeps up again: %d of %d KB/s, %d peers", s.label, st.Download/kib, st.Bitrate/kib, st.Peers)
 		}
 		if stalled {
 			log.Printf("[swarm] %s stalled, the engine went to %q (%d so far)", s.label, st.Status, st.Stalls)
@@ -261,18 +262,19 @@ func swarmMetrics(streams []streamStatus) []byte {
 			if channel == "" {
 				channel = short(st.Source)
 			}
-			fmt.Fprintf(&buf, "%s{channel=\"%s\"} %g\n", name, prometheusLabel(channel), value(st, st.Swarm))
+			fmt.Fprintf(&buf, "%s{channel=\"%s\"} %s\n", name, prometheusLabel(channel),
+				strconv.FormatFloat(value(st, st.Swarm), 'f', -1, 64))
 		}
 	}
 	metric("acestream_stream_viewers", "gauge", "Viewers on the channel's shared stream",
 		func(st streamStatus, _ *swarmStatus) float64 { return float64(st.Viewers) })
 	metric("acestream_stream_peers", "gauge", "Peers the engine has for the channel",
 		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Peers) })
-	metric("acestream_stream_speed_down_kbps", "gauge", "Engine download rate in KiB/s",
-		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.SpeedDown) })
-	metric("acestream_stream_speed_up_kbps", "gauge", "Engine upload rate in KiB/s",
-		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.SpeedUp) })
-	metric("acestream_stream_bitrate_kbps", "gauge", "Stream bitrate in KiB/s, measured from the bytes relayed (0=not known yet)",
+	metric("acestream_stream_download_bytes_per_second", "gauge", "Engine download rate",
+		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Download) })
+	metric("acestream_stream_upload_bytes_per_second", "gauge", "Engine upload rate",
+		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Upload) })
+	metric("acestream_stream_bitrate_bytes_per_second", "gauge", "Stream bitrate, measured from the bytes relayed (0=not known yet)",
 		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Bitrate) })
 	metric("acestream_stream_headroom", "gauge", "Download rate over bitrate, below 1 the engine's buffer drains (0=not known yet)",
 		func(_ streamStatus, w *swarmStatus) float64 { return w.Headroom })

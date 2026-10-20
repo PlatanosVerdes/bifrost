@@ -18,16 +18,18 @@ const ago = (t) => {
 };
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const secs = (n) => `${Number(n ?? 0).toFixed(1)} s`;
+const kb = (bytes) => Math.round((bytes ?? 0) / 1024);
 
 // The engine's swarm: peers and its download against the stream's bitrate, red once it falls short.
 const swarm = (sw) => {
   if (!sw?.sampled_at) return nothing;
-  const rate = sw.bitrate_kbps ? `${sw.speed_down_kbps}/${sw.bitrate_kbps} KB/s` : `${sw.speed_down_kbps} KB/s`;
+  const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second);
+  const speeds = rate ? `${down}/${rate} KB/s` : `${down} KB/s`;
   const short = sw.starving || (sw.headroom > 0 && sw.headroom < 1);
-  const title = sw.bitrate_kbps
-    ? `The engine downloads ${sw.speed_down_kbps} KB/s of a ${sw.bitrate_kbps} KB/s stream (${sw.headroom.toFixed(2)}x)${sw.starving ? ", short for a while: its buffer is draining" : ""}`
+  const title = rate
+    ? `The engine downloads ${down} KB/s of a ${rate} KB/s stream (${sw.headroom.toFixed(2)}x)${sw.starving ? ", short for a while: its buffer is draining" : ""}`
     : "Engine download; the bitrate is known after a few seconds of playing";
-  return html` · <span class=${short ? "bad" : ""} title=${title}>${plural(sw.peers, "peer")} · ${rate}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
+  return html` · <span class=${short ? "bad" : ""} title=${title}>${plural(sw.peers, "peer")} · ${speeds}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
 };
 
 // What a channel's dot and line say: playing now, else its last open since bifrost started.
