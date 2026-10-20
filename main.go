@@ -27,6 +27,12 @@ func main() {
 	h.name = getenv("BIFROST_NAME", hostname())
 	h.sourceWait = getduration("SOURCE_WAIT", 25*time.Second)
 	h.channelWait = getduration("CHANNEL_MAX_WAIT", 90*time.Second)
+	h.policy.after = getduration("SWITCH_AFTER", h.policy.after)
+	h.policy.probeFor = getduration("PROBE_FOR", h.policy.probeFor)
+	h.policy.cooldown = getduration("PROBE_COOLDOWN", h.policy.cooldown)
+	h.policy.minHeadroom = getfloat("SWITCH_MIN_HEADROOM", h.policy.minHeadroom)
+	h.policy.margin = getfloat("SWITCH_MARGIN", h.policy.margin)
+	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 
 	// The guide left by the last run, so the page knows what airs before the first pass cuts a new one.
 	_ = h.schedule.load(filepath.Join(filepath.Dir(cfg.outputFile), "guide.xml"))
