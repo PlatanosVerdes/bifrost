@@ -31,6 +31,10 @@ func main() {
 	// The guide left by the last run, so the page knows what airs before the first pass cuts a new one.
 	_ = h.schedule.load(filepath.Join(filepath.Dir(cfg.outputFile), "guide.xml"))
 
+	if cfg.pushgatewayURL != "" {
+		go h.pushSwarm(cfg.pushgatewayURL)
+	}
+
 	l := &lister{cfg: cfg, catalog: cat, hub: h}
 	go func() {
 		for {

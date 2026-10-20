@@ -73,7 +73,7 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /channel/<slug>` | The channel's stream, from the first source that produces video |
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
 | `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, its last open since bifrost started, and what it airs now and next by the guide |
-| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, and the programme on air and the next one, from guide.xml), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
+| `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, the programme on air and the next one, from guide.xml, and its `swarm`, see below), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
@@ -84,6 +84,40 @@ directly (and so skips the shared connection) can take a channel's current sourc
 The metrics keep the names of the service this replaced (`acestream_run_total`,
 `acestream_unique_channels`, `acestream_jellyfin_refresh_http_code`…), pushed under the job
 `acestream_updater`, so existing dashboards and alerts keep working.
+
+### The swarm
+
+A channel can open in a second and still stall every minute: the engine downloads slower than the
+stream plays, its buffer runs dry, and the TV gives up and reopens. During a Champions League match
+a 1080p channel of about 800 KB/s got 527–750 KB/s from its swarm, and nothing in bifrost said so.
+
+So while a stream plays, bifrost asks the engine how its swarm is doing every 5 s. It does not open
+anything to ask: aceserve redirects `/ace/getstream` to `/ace/r/<infohash>/<session>`, and
+`/ace/stat/<infohash>/<session>` answers for that same playback. The engine does not say the
+bitrate, so bifrost measures it: the bytes it relayed over the last minute, divided by how far the
+engine's live position moved. Wall time would sink with the download exactly when it matters.
+
+Each playing stream in `/api/status` carries a `swarm`:
+
+| Field | What it is |
+| :--- | :--- |
+| `status` | The engine's state: `dl` while it downloads, `prebuf` while it refills its buffer |
+| `peers` | Peers the engine is connected to |
+| `download_bytes_per_second`, `upload_bytes_per_second` | The engine's rates (it counts in KiB/s; these are ×1024) |
+| `bitrate_bytes_per_second` | The stream's rate, once ten seconds have played |
+| `headroom` | Download over bitrate. Below 1 the buffer drains |
+| `starving` | The download has been under the bitrate for three samples in a row (15 s) |
+| `stalls` | Times the engine left `dl` since the stream started |
+| `sampled_at`, `unavailable` | When the engine last answered, and why the last ask failed, if it did |
+
+The page shows it in KB/s next to the channel (`12 peers · 850/820 KB/s`), red below 1, and the
+log says when a channel starts and stops starving. The same numbers are pushed per channel slug
+under their own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each
+other: `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`,
+`_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving` and
+`_stalls_total`, all labelled `channel="<slug>"`. A dashboard that filters on
+`job="acestream_updater"` has to take in `acestream_streams` too to see them. A channel nobody
+watches any more drops out of the group.
 
 ## Rules that look odd and must stay
 
