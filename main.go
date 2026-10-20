@@ -34,6 +34,10 @@ func main() {
 	h.policy.margin = getfloat("SWITCH_MARGIN", h.policy.margin)
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 
+	if after := getduration("ORPHAN_AFTER", 15*time.Minute); after > 0 && h.jellyfinURL != "" {
+		go h.closeOrphans(time.Minute, after)
+	}
+
 	// The guide left by the last run, so the page knows what airs before the first pass cuts a new one.
 	_ = h.schedule.load(filepath.Join(filepath.Dir(cfg.outputFile), "guide.xml"))
 
