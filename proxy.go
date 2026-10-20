@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -50,6 +51,7 @@ type hub struct {
 	jellyfinURL, jellyfinKey string // only for /api/status to ask how Jellyfin is playing
 	name                     string // the machine, shown on the page
 	schedule                 *schedule
+	swarmEvery               time.Duration
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -80,12 +82,15 @@ type stream struct {
 	source        string
 	playingSince  time.Time
 	startedAfterS float64
+
+	relayed atomic.Int64
+	swarm   swarm
 }
 
 func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
 		client: &http.Client{}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
-		schedule: &schedule{}}
+		schedule: &schedule{}, swarmEvery: 5 * time.Second}
 }
 
 func (h *hub) planFor(r *http.Request) (plan, bool) {
@@ -288,6 +293,10 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	s.ok, s.header = true, resp.Header.Clone()
 	close(s.ready)
 	s.broadcast(first)
+	s.relayed.Add(int64(len(first)))
+	if url := statURL(resp); url != "" {
+		go s.watchSwarm(ctx, url)
+	}
 
 	for {
 		// Whole chunks, so the backlog is the 8 MB it claims: the engine's reads come in a few KB at
@@ -296,6 +305,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 		n, err := io.ReadFull(resp.Body, buf)
 		if n > 0 {
 			s.broadcast(buf[:n])
+			s.relayed.Add(int64(n))
 		}
 		if err != nil {
 			if ctx.Err() == nil {
