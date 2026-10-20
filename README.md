@@ -63,6 +63,7 @@ bifrost:
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
 | `SWITCH_AFTER` | `30s` | How long a stream starves before another source is probed; `0` turns switching off |
 | `PROBE_FOR`, `PROBE_COOLDOWN` | `20s`, `3m` | How long a probed source is measured; the wait between two probes of a channel |
+| `ORPHAN_AFTER` | `15m` | Let go a stream only Jellyfin holds once no Jellyfin session has played it for this long; `0` turns it off. Needs `JELLYFIN_URL` |
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](#moving-to-a-better-source)) |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 
@@ -88,6 +89,21 @@ directly (and so skips the shared connection) can take a channel's current sourc
 The metrics keep the names of the service this replaced (`acestream_run_total`,
 `acestream_unique_channels`, `acestream_jellyfin_refresh_http_code`…), pushed under the job
 `acestream_updater`, so existing dashboards and alerts keep working.
+
+### Streams nobody watches
+
+Jellyfin can lose track of a session and keep pulling a channel with nobody in front of it: a TV
+cut off mid-stream (a bifrost restart) reopens the channel, and its later "stopped" is applied to the
+old session, so the engine goes on downloading a stream for nobody. Once a minute, while a stream is
+open, bifrost asks Jellyfin which channels its sessions play. A stream whose every viewer is Jellyfin
+(by User-Agent) and that no session has played for `ORPHAN_AFTER` in a row is let go, with a
+`[proxy] … closed: no Jellyfin session has played it` line. It never closes on doubt: not while a
+viewer that is not Jellyfin is on it, and not while Jellyfin cannot be asked. The `[proxy] …
+requested` line names who opened a stream, `Jellyfin` or `direct: <User-Agent>`.
+
+The 15 minutes are well past the five or six Jellyfin itself takes to notice a TV switched off
+without a stop. A Jellyfin recording has no playing session either, so set it higher, or `0`, if
+recordings are made from these channels.
 
 ### The swarm
 

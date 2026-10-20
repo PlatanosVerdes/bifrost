@@ -83,6 +83,7 @@ type stream struct {
 
 	mu            sync.Mutex
 	viewers       map[chan []byte]struct{}
+	direct        map[chan []byte]struct{} // viewers that are not Jellyfin, which the orphan check never closes
 	cancel        context.CancelFunc
 	idle          *time.Timer
 	done          bool
@@ -175,9 +176,9 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	s, viewer, shared := h.join(p, r)
 	if shared {
-		log.Printf("[proxy] %s joined the running stream (%d watching)", s.label, s.count())
+		log.Printf("[proxy] %s joined the running stream (%d watching, %s)", s.label, s.count(), client(r))
 	} else {
-		log.Printf("[proxy] %s requested", s.label)
+		log.Printf("[proxy] %s requested (%s)", s.label, client(r))
 	}
 	defer s.leave(viewer)
 
@@ -234,6 +235,7 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 		s.mu.Lock()
 		if !s.done {
 			s.viewers[viewer] = struct{}{}
+			s.noteDirect(viewer, r)
 			if s.idle != nil {
 				s.idle.Stop()
 				s.idle = nil
@@ -250,6 +252,7 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
 		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel, ctx: ctx, headers: headers,
 		handover: make(chan handover), swarm: &swarm{threshold: h.policy.starvingBelow}}
+	s.noteDirect(viewer, r)
 	h.streams[p.key] = s
 	go s.run(ctx, p, headers)
 	return s, viewer, false
@@ -361,6 +364,7 @@ func (s *stream) broadcast(chunk []byte) {
 		default:
 			log.Printf("[proxy] %s dropped a viewer that fell %d chunks behind", s.label, viewerBacklog)
 			delete(s.viewers, v)
+			delete(s.direct, v)
 			close(v)
 		}
 	}
@@ -374,6 +378,7 @@ func (s *stream) leave(viewer chan []byte) {
 	if _, ok := s.viewers[viewer]; ok {
 		delete(s.viewers, viewer)
 	}
+	delete(s.direct, viewer)
 	if len(s.viewers) > 0 || s.done || s.idle != nil {
 		return
 	}
@@ -400,11 +405,29 @@ func (s *stream) finish() {
 		close(v)
 	}
 	s.viewers = map[chan []byte]struct{}{}
+	s.direct = map[chan []byte]struct{}{}
 	if s.idle != nil {
 		s.idle.Stop()
 	}
 	s.mu.Unlock()
 	s.cancel()
+}
+
+// noteDirect remembers a viewer that is not Jellyfin. Called with s.mu held, or before s is shared.
+func (s *stream) noteDirect(viewer chan []byte, r *http.Request) {
+	if fromJellyfin(r) {
+		return
+	}
+	if s.direct == nil {
+		s.direct = map[chan []byte]struct{}{}
+	}
+	s.direct[viewer] = struct{}{}
+}
+
+func (s *stream) directViewers() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.direct)
 }
 
 func (s *stream) count() int {
