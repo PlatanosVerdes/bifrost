@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"sort"
@@ -57,6 +58,14 @@ type streamStatus struct {
 	Now           *airing      `json:"now,omitempty"`
 	Next          *airing      `json:"next,omitempty"`
 	Swarm         *swarmStatus `json:"swarm,omitempty"`
+	// Probing is a second source being measured next to this one, to switch to if clearly better.
+	Probing       bool          `json:"probing"`
+	ProbingSource string        `json:"probing_source,omitempty"`
+	Switches      int           `json:"switches"`
+	LastSwitch    *switchRecord `json:"last_switch,omitempty"`
+	LastProbe     *probeRecord  `json:"last_probe,omitempty"`
+
+	channelSwitches int // since bifrost started, for the metric
 }
 
 // statusBoard is written by both halves and read by the handlers.
@@ -177,12 +186,18 @@ func (h *hub) streamsNow() []streamStatus {
 	}
 	h.mu.Unlock()
 
+	h.mu.Lock()
+	switches := maps.Clone(h.switches)
+	h.mu.Unlock()
+
 	out := []streamStatus{}
 	for _, s := range streams {
 		s.mu.Lock()
 		if !s.done && s.ok {
 			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source,
-				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status()})
+				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
+				Probing: s.probing != "", ProbingSource: s.probing, Switches: s.switches, LastSwitch: s.lastSwitch,
+				LastProbe: s.lastProbe, channelSwitches: switches[s.slug]})
 			out[len(out)-1].Now, out[len(out)-1].Next = h.onAir(s.slug)
 		}
 		s.mu.Unlock()

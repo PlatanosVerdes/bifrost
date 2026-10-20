@@ -25,14 +25,16 @@ import (
 
 const (
 	swarmHistory = 24 // samples kept per stream: two minutes at the default poll
-	// The bitrate is measured over this much of the history, and not before it spans swarmMinSpan.
-	swarmSpan    = 60 * time.Second
-	swarmMinSpan = 10 * time.Second
+	// The bitrate is measured over this much of the history.
+	swarmSpan = 60 * time.Second
 	// Samples in a row with the download under the bitrate before a stream counts as starving: one
 	// slow sample is the engine's speed jittering, three are its buffer draining.
 	starvingAfter = 3
 	kib           = 1024
 )
+
+// The bitrate is not measured before the samples span this much. A variable only for the tests.
+var swarmMinSpan = 10 * time.Second
 
 // engineStat is the part of the engine's stat answer worth keeping. Speeds are in KiB/s.
 type engineStat struct {
@@ -103,11 +105,13 @@ type swarmStatus struct {
 }
 
 type swarm struct {
-	mu      sync.Mutex
-	samples []swarmSample
-	below   int
-	stalls  int
-	lastErr string
+	mu        sync.Mutex
+	samples   []swarmSample
+	below     int
+	stalls    int
+	lastErr   string
+	since     time.Time // when it started starving
+	threshold float64   // download under this times the bitrate is short; 0 means 1
 }
 
 // add records a sample and says whether the stream just started or stopped starving, and whether
@@ -125,13 +129,54 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 		w.samples = w.samples[len(w.samples)-swarmHistory:]
 	}
 	wasStarving := w.below >= starvingAfter
-	if rate := bitrate(w.samples); rate > 0 && float64(s.stat.SpeedDown*kib) < rate {
+	threshold := w.threshold
+	if threshold == 0 {
+		threshold = 1
+	}
+	if rate := bitrate(w.samples); rate > 0 && float64(s.stat.SpeedDown*kib) < rate*threshold {
 		w.below++
 	} else {
 		w.below = 0
 	}
 	isStarving := w.below >= starvingAfter
+	switch {
+	case isStarving && !wasStarving:
+		w.since = s.at
+	case !isStarving:
+		w.since = time.Time{}
+	}
 	return isStarving && !wasStarving, wasStarving && !isStarving, stalled
+}
+
+func (w *swarm) starvingSince() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.since
+}
+
+func (w *swarm) rate() float64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return bitrate(w.samples)
+}
+
+func (w *swarm) stalledSoFar() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stalls
+}
+
+// reading averages the samples taken since a moment, against the stream's bitrate.
+func (w *swarm) reading(since time.Time) reading {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var recent []swarmSample
+	for _, s := range w.samples {
+		if !s.at.Before(since) {
+			recent = append(recent, s)
+		}
+	}
+	return readingOf(recent, bitrate(w.samples))
 }
 
 func (w *swarm) failed(err error) {
@@ -187,8 +232,8 @@ func bitrate(samples []swarmSample) float64 {
 	return float64(last.relayed-first.relayed) / seconds
 }
 
-// watchSwarm polls the engine's stat for as long as the stream runs.
-func (s *stream) watchSwarm(ctx context.Context, url string) {
+// watchSwarm polls the engine's stat for as long as the source plays.
+func (s *stream) watchSwarm(ctx context.Context, url string, w *swarm) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	ticker := time.NewTicker(s.h.swarmEvery)
 	defer ticker.Stop()
@@ -201,13 +246,16 @@ func (s *stream) watchSwarm(ctx context.Context, url string) {
 		sample, err := fetchStat(ctx, client, url)
 		if err != nil {
 			if ctx.Err() == nil {
-				s.swarm.failed(err)
+				w.failed(err)
 			}
 			continue
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		sample.relayed = s.relayed.Load()
-		starving, recovered, stalled := s.swarm.add(sample)
-		st := s.swarm.status()
+		starving, recovered, stalled := w.add(sample)
+		st := w.status()
 		switch {
 		case starving:
 			log.Printf("[swarm] %s starving: %d of %d KB/s, %d peers", s.label, st.Download/kib, st.Bitrate/kib, st.Peers)
@@ -217,6 +265,7 @@ func (s *stream) watchSwarm(ctx context.Context, url string) {
 		if stalled {
 			log.Printf("[swarm] %s stalled, the engine went to %q (%d so far)", s.label, st.Status, st.Stalls)
 		}
+		s.maybeProbe(w)
 	}
 }
 
@@ -282,6 +331,8 @@ func swarmMetrics(streams []streamStatus) []byte {
 		func(_ streamStatus, w *swarmStatus) float64 { return boolGauge(w.Starving) })
 	metric("acestream_stream_stalls_total", "counter", "Times the engine left downloading since the stream started",
 		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Stalls) })
+	metric("acestream_stream_source_switches_total", "counter", "Times the channel moved its viewers to a better source since bifrost started",
+		func(st streamStatus, _ *swarmStatus) float64 { return float64(st.channelSwitches) })
 	return buf.Bytes()
 }
 
