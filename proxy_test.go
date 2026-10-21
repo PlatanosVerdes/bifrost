@@ -480,3 +480,27 @@ func TestRequestWithoutChannelOrIDIs404(t *testing.T) {
 		t.Errorf("status %d with %d engine opens, want 404 and none", resp.StatusCode, engine.opened.Load())
 	}
 }
+
+// The Jellyfin user leads what the page and the log say about who is watching.
+func TestJellyfinSessionsNameTheUser(t *testing.T) {
+	jf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[{"UserName":"jorge","Client":"Jellyfin for Tizen","DeviceName":"Samsung TV",
+			"NowPlayingItem":{"Name":"Channel 1 1080p","Type":"TvChannel"}},
+			{"UserName":"ana","Client":"Jellyfin Web","DeviceName":"Chrome",
+			"NowPlayingItem":{"Name":"Some film","Type":"Movie"}}]`)
+	}))
+	defer jf.Close()
+	playing, err := jellyfinSessions(jf.URL, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playing) != 1 || playing[0].User != "jorge" {
+		t.Fatalf("got %+v, want one live channel played by jorge", playing)
+	}
+	if got := playing[0].who(); got != "jorge · Samsung TV · Jellyfin for Tizen" {
+		t.Errorf("who: %q", got)
+	}
+	if got := (jellyfinPlayback{Device: "Chrome", Client: "Jellyfin Web"}).who(); got != "Chrome · Jellyfin Web" {
+		t.Errorf("who without a user: %q", got)
+	}
+}

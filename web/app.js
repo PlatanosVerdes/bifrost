@@ -47,7 +47,8 @@ function channelState(channel, jellyfin) {
   if (channel.playing) {
     const jf = jellyfin.find((p) => p.channel === channel.name);
     const how = jf ? (jf.video === "copy" ? " · Jellyfin copies" : " · Jellyfin re-encodes") : "";
-    return { tone: "live", text: html`Playing · ${channel.playing.viewers} watching · first video in ${secs(channel.playing.started_after_s)}${how}${swarm(channel.playing.swarm)}` };
+    const who = jellyfin.filter((p) => p.channel === channel.name).map((p) => p.user).filter(Boolean).join(", ");
+    return { tone: "live", text: html`Playing · ${channel.playing.viewers} watching${who ? ` (${who})` : ""} · first video in ${secs(channel.playing.started_after_s)}${how}${swarm(channel.playing.swarm)}` };
   }
   const o = channel.last_open;
   if (!o) return { tone: "none", text: "Not opened yet" };
@@ -198,13 +199,15 @@ class ActivityView extends LitElement {
         <p>When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.</p></div></div>`;
     }
     return streams.map((st) => {
-      const jf = jellyfin.find((p) => st.channel.startsWith(p.channel));
+      const watchers = jellyfin.filter((p) => st.channel.startsWith(p.channel));
+      const jf = watchers[0];
+      const who = watchers.map((w) => [w.user, w.device, w.client].filter(Boolean).join(" · ")).join(", ");
       return html`<div class="row">${this.screen(true)}<div>
         <b>${st.channel}</b>${jf ? (jf.video === "copy"
           ? html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`
           : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${st.swarm?.starving ? html`<span class="tag slow" title="The engine has downloaded less than the stream plays for a while: its buffer is draining">swarm too slow · ${st.swarm.headroom.toFixed(2)}x</span>` : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title="Measuring another source of the channel next to this one, to move to it if it is clearly better">trying ${st.probing_source.slice(0, 8)}…</span>` : nothing}
         ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
-        <p>Source ${this.source(st.source)} · ${st.viewers} watching${jf ? ` on ${jf.device} · ${jf.client}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}${swarm(st.swarm)}</p>
+        <p>Source ${this.source(st.source)} · ${st.viewers} watching${who ? ` · ${who}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}${swarm(st.swarm)}</p>
         ${switched(st)}
       </div></div>`;
     });
