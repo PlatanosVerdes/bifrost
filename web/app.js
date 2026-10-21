@@ -20,16 +20,18 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const secs = (n) => `${Number(n ?? 0).toFixed(1)} s`;
 const kb = (bytes) => Math.round((bytes ?? 0) / 1024);
 
-// The engine's swarm: peers and its download against the stream's bitrate, red once it falls short.
-const swarm = (sw) => {
+// How the swarm keeps up: quiet when the download covers the stream, "tight" just under it, "short"
+// only once it has been under for a while (bifrost's starving flag). A dip to 0.98x is not an alarm.
+const swarmTone = (sw) => sw?.starving ? "short" : sw?.headroom > 0 && sw.headroom < 1 ? "tight" : "";
+
+// The engine's swarm on one line, for the channel list: only the speeds take a colour, never the peers.
+const swarm = (sw, speedsOnly = false) => {
   if (!sw?.sampled_at) return nothing;
   const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second);
-  const speeds = rate ? `${down}/${rate} KB/s` : `${down} KB/s`;
-  const short = sw.starving || (sw.headroom > 0 && sw.headroom < 1);
   const title = rate
     ? `The engine downloads ${down} KB/s of a ${rate} KB/s stream (${sw.headroom.toFixed(2)}x)${sw.starving ? ", short for a while: its buffer is draining" : ""}`
     : "Engine download; the bitrate is known after a few seconds of playing";
-  return html` · <span class=${short ? "bad" : ""} title=${title}>${plural(sw.peers, "peer")} · ${speeds}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
+  return html` · ${speedsOnly ? nothing : `${plural(sw.peers, "peer")} · `}<span class=${swarmTone(sw)} title=${title}>${rate ? `${down}/${rate} KB/s` : `${down} KB/s`}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
 };
 
 // The last time a starving stream moved to another source, or why it stayed on the one it has.
@@ -45,14 +47,14 @@ const switched = (st) => {
 // What a channel's dot and line say: playing now, else its last open since bifrost started.
 function channelState(channel, jellyfin) {
   if (channel.playing) {
-    const jf = jellyfin.find((p) => p.channel === channel.name);
-    const how = jf ? (jf.video === "copy" ? " · Jellyfin copies" : " · Jellyfin re-encodes") : "";
+    // Who, and the swarm only when it is not keeping up: the rest is on Activity.
     const who = jellyfin.filter((p) => p.channel === channel.name).map((p) => p.user).filter(Boolean).join(", ");
-    return { tone: "live", text: html`Playing · ${channel.playing.viewers} watching${who ? ` (${who})` : ""} · first video in ${secs(channel.playing.started_after_s)}${how}${swarm(channel.playing.swarm)}` };
+    const sw = channel.playing.swarm;
+    return { tone: "live", text: html`Playing · ${who || plural(channel.playing.viewers, "viewer")}${swarmTone(sw) ? swarm(sw, true) : nothing}` };
   }
   const o = channel.last_open;
   if (!o) return { tone: "none", text: "Not opened yet" };
-  if (o.outcome === "playing") return { tone: "ok", text: `Played at ${hhmm(o.at)}${o.device ? ` on ${o.device}` : ""} · first video in ${secs(o.seconds)}` };
+  if (o.outcome === "playing") return { tone: "played", text: `Played at ${hhmm(o.at)}${o.device ? ` on ${o.device}` : ""} · first video in ${secs(o.seconds)}` };
   if (o.outcome === "gave_up") return { tone: "bad", text: `No source played at ${hhmm(o.at)} (${secs(o.seconds)})` };
   return { tone: "warn", text: `Left before it started at ${hhmm(o.at)} (${secs(o.seconds)})` };
 }
@@ -64,12 +66,14 @@ const base = css`
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; min-width: 0; }
   .muted { color: var(--muted); }
   .mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
-  .dot.live { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
-  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.ok { background: var(--ok); } .dot.played { background: var(--played); }
+  .dot.bad { background: var(--calm-bad); } .dot.warn { background: var(--calm-warn); }
   .dot.none { background: transparent; border: 1.5px solid var(--line); }
-  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); } .live { color: var(--accent); }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 26px 0 10px; font-weight: 700; }
+  .ok { color: var(--ok); } .bad { color: var(--calm-bad); } .warn { color: var(--calm-warn); } .live { color: var(--accent); }
+  .tight { color: var(--calm-warn); } .short { color: var(--calm-bad); } .quick { color: var(--calm-ok); }
+  h2 { font-size: 14px; color: var(--muted); margin: 26px 0 10px; font-weight: 600; }
   h2.first { margin-top: 0; }
 `;
 
@@ -86,6 +90,7 @@ class ChannelGroup extends LitElement {
     li:first-child { border-top: 0; }
     .name { font-weight: 600; font-size: 14px; min-width: 0; }
     .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+    .state.played, .state.warn, .state.live { color: var(--muted); }
     .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
   `];
@@ -142,7 +147,7 @@ class ChannelBoard extends LitElement {
       <div class="tools">
         <input type="search" placeholder="Search channels…" aria-label="Search channels" .value=${this.query} @input=${(e) => { this.query = e.target.value; }}>
         <div class="legend">
-          <span><i class="dot live"></i>Playing</span><span><i class="dot ok"></i>Last open played</span>
+          <span><i class="dot live"></i>Playing</span><span><i class="dot played"></i>Last open played</span>
           <span><i class="dot warn"></i>Last open left early</span><span><i class="dot bad"></i>Last open failed</span>
           <span><i class="dot none"></i>Not opened yet</span>
         </div>
@@ -159,7 +164,8 @@ customElements.define("channel-board", ChannelBoard);
 class ActivityView extends LitElement {
   static properties = { status: { attribute: false } };
   static styles = [base, css`
-    .row { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
+    .row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; }
+    .row > div { min-width: 0; overflow-wrap: anywhere; }
     .row + .row { margin-top: 12px; }
     .ring { width: 44px; height: 44px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); }
     .ring.on { border: 2px solid var(--accent); color: var(--accent); }
@@ -181,10 +187,24 @@ class ActivityView extends LitElement {
     .source { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
     .source:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .res { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
-    .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+    .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; display: inline-block; white-space: nowrap; overflow-wrap: normal; }
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
     .tag.trans { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-    .tag.slow { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+    .tag.slow { background: color-mix(in srgb, var(--calm-bad) 16%, transparent); color: var(--calm-bad); }
+    /* Two channels and five opens high (set in updated()), then the card scrolls; not on a phone, where a scroll
+       inside the page's scroll traps the thumb. */
+    .scroller { max-height: var(--fit, none); overflow-y: auto; scrollbar-width: thin; margin-right: -8px; padding-right: 8px; }
+    @media (max-width: 600px) { .scroller { max-height: none; overflow: visible; margin-right: 0; padding-right: 0; } }
+    .stream > p.muted { font-size: 12px; margin: 10px 0 0; }
+    .stream + .stream { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .facts { display: grid; gap: 14px 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); margin-top: 14px; }
+    .fact { min-width: 0; font-size: 14px; }
+    .fact .lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .fact .sub { display: block; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+    .gauge { position: relative; height: 6px; border-radius: 6px; background: var(--chip); margin: 7px 0 4px; max-width: 220px; }
+    .gauge i { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: var(--muted); }
+    .gauge.tight i { background: var(--calm-warn); } .gauge.short i { background: var(--calm-bad); }
+    .gauge::after { content: ""; position: absolute; top: -3px; bottom: -3px; left: calc(100% / 1.5); width: 1.5px; background: var(--ink); opacity: .5; }
     .tag.probe { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
@@ -198,19 +218,45 @@ class ActivityView extends LitElement {
       return html`<div class="row">${this.screen(false)}<div><b>Nobody is watching</b>
         <p>When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.</p></div></div>`;
     }
-    return streams.map((st) => {
-      const watchers = jellyfin.filter((p) => st.channel.startsWith(p.channel));
-      const jf = watchers[0];
-      const who = watchers.map((w) => [w.user, w.device, w.client].filter(Boolean).join(" · ")).join(", ");
-      return html`<div class="row">${this.screen(true)}<div>
-        <b>${st.channel}</b>${jf ? (jf.video === "copy"
-          ? html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`
-          : html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`) : nothing}${st.swarm?.starving ? html`<span class="tag slow" title="The engine has downloaded less than the stream plays for a while: its buffer is draining">swarm too slow · ${st.swarm.headroom.toFixed(2)}x</span>` : nothing}${jf?.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's speed against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title="Measuring another source of the channel next to this one, to move to it if it is clearly better">trying ${st.probing_source.slice(0, 8)}…</span>` : nothing}
-        ${st.now ? html`<p class="air">${st.now.title} <span>· until ${hhmm(st.now.stop)}${st.next ? ` · then ${st.next.title}` : ""}</span></p>` : nothing}
-        <p>Source ${this.source(st.source)} · ${st.viewers} watching${who ? ` · ${who}` : ""} · since ${hhmm(st.since)} · first video in ${secs(st.started_after_s)}${jf?.video !== "copy" && jf?.reasons ? ` · Jellyfin: ${jf.reasons.join(", ")}` : ""}${swarm(st.swarm)}</p>
-        ${switched(st)}
-      </div></div>`;
-    });
+    return html`<div class="scroller">${streams.map((st) => this.stream(st, jellyfin))}</div>`;
+  }
+
+  stream(st, jellyfin) {
+    const watchers = jellyfin.filter((p) => st.channel.startsWith(p.channel));
+    const jf = watchers[0];
+    const transcoding = jf && jf.video !== "copy";
+    return html`<div class="stream"><div class="row">${this.screen(true)}<div>
+      <b>${st.channel}</b>${jf ? (transcoding
+        ? html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`
+        : html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`) : nothing}${transcoding && jf.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's re-encode against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title="Measuring another source of the channel next to this one, to move to it if it is clearly better">trying ${st.probing_source.slice(0, 8)}…</span>` : nothing}
+      ${st.now ? html`<p class="air">${st.now.title} <span>until ${hhmm(st.now.stop)}${st.next ? `, then ${st.next.title}` : ""}</span></p>` : nothing}
+    </div></div>
+    <div class="facts">
+      ${this.watching(st, watchers)}
+      ${this.swarmFact(st.swarm)}
+      <div class="fact"><span class="lbl">Source</span>${this.source(st.source)}
+        <span class="sub">since ${hhmm(st.since)}, first video in ${secs(st.started_after_s)}</span>
+        ${transcoding && jf.reasons ? html`<span class="sub">Jellyfin re-encodes: ${jf.reasons.join(", ")}</span>` : nothing}</div>
+    </div>
+    ${switched(st)}</div>`;
+  }
+
+  watching(st, watchers) {
+    if (!watchers.length) return html`<div class="fact"><span class="lbl">Watching</span>${plural(st.viewers, "viewer")}<span class="sub">not through Jellyfin</span></div>`;
+    return html`<div class="fact"><span class="lbl">Watching</span>${watchers.map((w) => html`${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(", ")}</span>`)}</div>`;
+  }
+
+  // The headroom bar is the one loud thing on the card: whether the channel keeps up. The tick marks
+  // what the stream needs (1x); the bar fills to 1.5x.
+  swarmFact(sw) {
+    if (!sw?.sampled_at) return html`<div class="fact"><span class="lbl">Swarm</span><span class="muted">measuring…</span></div>`;
+    const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second), tone = swarmTone(sw);
+    const fill = rate ? Math.min(sw.headroom / 1.5, 1) * 100 : 0;
+    return html`<div class="fact"><span class="lbl">Swarm</span>${plural(sw.peers, "peer")}
+      ${rate ? html`<div class="gauge ${tone}" role="img" aria-label="${sw.headroom.toFixed(2)} times what the stream needs"><i style="width:${fill}%"></i></div>
+        <span class="sub ${tone}">${down} KB/s of ${rate} needed · ${sw.headroom.toFixed(2)}x${tone === "short" ? ", buffer draining" : ""}</span>`
+        : html`<span class="sub">${down} KB/s, bitrate known in a few seconds</span>`}
+      ${sw.stalls ? html`<span class="sub">${plural(sw.stalls, "stall")}</span>` : nothing}</div>`;
   }
 
   // The short id copies a link to that one source, for a player that is not Jellyfin, like VLC.
@@ -228,12 +274,22 @@ class ActivityView extends LitElement {
     const recent = this.status.recent || [];
     if (!recent.length) return html`<li><span></span><span class="muted">No opens since bifrost started.</span><span></span></li>`;
     return recent.map((r) => {
-      const tone = r.outcome === "playing" ? "ok" : r.outcome === "gave_up" ? "bad" : "warn";
+      // Grey is normal; colour only says something: under a second, slow, or nothing played.
+      const tone = r.outcome === "gave_up" ? "bad" : r.outcome !== "playing" ? "" : r.seconds < 1 ? "quick" : r.seconds > 5 ? "tight" : "";
       const res = r.outcome === "playing" ? secs(r.seconds) : r.outcome === "gave_up" ? "no video" : "left early";
       const title = r.outcome === "playing" ? `first video after ${secs(r.seconds)}` : `gave up after ${secs(r.seconds)}`;
-      return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone}" title="${title}">${res}</span>
+      return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone || "muted"}" title="${title}">${res}</span>
         ${r.device ? html`<span class="dev">${r.device}</span>` : nothing}</li>`;
     });
+  }
+
+  updated() {
+    const fit = (box, n) => {
+      const next = box?.children[n];
+      box?.style.setProperty("--fit", next ? `${next.offsetTop - box.offsetTop}px` : "none");
+    };
+    fit(this.renderRoot.querySelector("div.scroller"), 2);
+    fit(this.renderRoot.querySelector("ul.scroller"), 5);
   }
 
   render() {
@@ -243,7 +299,7 @@ class ActivityView extends LitElement {
       <h2 class="first">Now</h2>
       <section class="card">${this.now()}</section>
       <div class="duo">
-        <div><h2>Recent opens</h2><section class="card"><ul>${this.recent()}</ul></section></div>
+        <div><h2>Recent opens</h2><section class="card"><ul class="scroller">${this.recent()}</ul></section></div>
         <div><h2>List and guide</h2><section class="card">
           <div class="big"><div><b>${l.channels ?? "–"}</b><span>channels</span></div><div><b>${l.sources ?? "–"}</b><span>sources</span></div><div><b>${g.channels ?? "–"}</b><span>with guide</span></div></div>
           <dl>

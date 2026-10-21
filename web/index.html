@@ -12,6 +12,8 @@
   :root {
     --bg: #f4f5f9; --surface: #ffffff; --ink: #161a2b; --muted: #5d6479; --line: #dde0ea; --chip: #eceef5;
     --accent: #4b4fd6; --ok: #11804a; --warn: #a96500; --bad: #c03636;
+    /* States that should be read, not shouted: tight but fine, short, failed, played before. */
+    --calm-ok: #3f7d5f; --calm-warn: #8a6a2a; --calm-bad: #a5544f; --played: #5c6f9e;
     --spectrum: linear-gradient(90deg, #e4475b, #f08a3e, #e7c13f, #3fb27f, #3f8fe0, #7a5ce6);
     --font-display: "Unbounded", "Figtree", system-ui, sans-serif;
     --font-ui: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -22,6 +24,7 @@
     :root {
       --bg: #0d1020; --surface: #151a2e; --ink: #e9ebf5; --muted: #9aa1ba; --line: #252b44; --chip: #1e2439;
       --accent: #8f93ff; --ok: #3cc47c; --warn: #f0b342; --bad: #ff7d7d; color-scheme: dark;
+      --calm-ok: #6fa88a; --calm-warn: #c9a15a; --calm-bad: #c9736f; --played: #7f96c8;
     }
   }
   html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
