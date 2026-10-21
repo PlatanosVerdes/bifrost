@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"math"
 	"net/http"
@@ -161,7 +162,8 @@ func (h *hub) noteDevice(at time.Time, label string) {
 		}
 		for _, p := range playing {
 			if strings.HasPrefix(label, p.Channel) {
-				h.status.setDevice(at, p.Device+" · "+p.Client)
+				h.status.setDevice(at, p.who())
+				log.Printf("[proxy] %s watched by %s", label, p.who())
 				return
 			}
 		}
@@ -311,6 +313,7 @@ type jellyfinPlayback struct {
 	Channel   string   `json:"channel"`
 	Client    string   `json:"client"`
 	Device    string   `json:"device"`
+	User      string   `json:"user,omitempty"`
 	Video     string   `json:"video"` // copy or transcode
 	Audio     string   `json:"audio"`
 	Reasons   []string `json:"reasons,omitempty"`
@@ -318,6 +321,17 @@ type jellyfinPlayback struct {
 	// Speed is ffmpeg's frame rate over the channel's: below 1 it falls behind live and stalls.
 	Speed    float64 `json:"speed,omitempty"`
 	Progress float64 `json:"completion,omitempty"`
+}
+
+// who names the viewer for the page and the log: the Jellyfin user, then the device and client.
+func (p jellyfinPlayback) who() string {
+	parts := []string{}
+	for _, part := range []string{p.User, p.Device, p.Client} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // jellyfinSessions asks Jellyfin, once per status request, which live channels it is playing.
@@ -336,6 +350,7 @@ func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
 		return nil, fmt.Errorf("Jellyfin /Sessions: HTTP %d", resp.StatusCode)
 	}
 	var sessions []struct {
+		UserName       string
 		Client         string
 		DeviceName     string
 		NowPlayingItem *struct {
@@ -363,7 +378,7 @@ func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
 			continue
 		}
 		p := jellyfinPlayback{Channel: s.NowPlayingItem.Name, Client: s.Client, Device: s.DeviceName,
-			Video: "copy", Audio: "copy"}
+			User: s.UserName, Video: "copy", Audio: "copy"}
 		if t := s.TranscodingInfo; t != nil {
 			if !t.IsVideoDirect {
 				p.Video = "transcode"
