@@ -296,18 +296,16 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	}
 
 	var apps []cfApp
-	if err := c.list(ctx, "/access/apps", &apps); err != nil {
-		return cfSnapshot{}, err
-	}
 	var reusable []cfPolicy
-	if err := c.list(ctx, "/access/policies", &reusable); err != nil {
-		return cfSnapshot{}, err
-	}
 	var groups []struct {
 		ID string `json:"id"`
 		cfRules
 	}
-	if err := c.list(ctx, "/access/groups", &groups); err != nil {
+	if err := parallel(
+		func() error { return c.list(ctx, "/access/apps", &apps) },
+		func() error { return c.list(ctx, "/access/policies", &reusable) },
+		func() error { return c.list(ctx, "/access/groups", &groups) },
+	); err != nil {
 		return cfSnapshot{}, err
 	}
 	byID := map[string]cfPolicy{}
@@ -412,15 +410,33 @@ func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
 	if err != nil {
 		return site{}, err
 	}
-	out := site{link: s.link, origins: s.origins, lists: []accessList{}}
-	for _, id := range s.groups {
-		g, err := c.group(ctx, id)
-		if err != nil {
-			return site{}, err
+	out := site{link: s.link, origins: s.origins, lists: make([]accessList, len(s.groups))}
+	jobs := make([]func() error, len(s.groups))
+	for i, id := range s.groups {
+		jobs[i] = func() error {
+			g, err := c.group(ctx, id)
+			if err == nil {
+				out.lists[i] = accessList{ID: id, Name: g.name(), Editable: !s.shared[id] && s.doubt == "", Members: g.emails()}
+			}
+			return err
 		}
-		out.lists = append(out.lists, accessList{ID: id, Name: g.name(), Editable: !s.shared[id] && s.doubt == "", Members: g.emails()})
+	}
+	if err := parallel(jobs...); err != nil {
+		return site{}, err
 	}
 	return out, nil
+}
+
+// parallel runs every job at once: each Cloudflare call is a round trip of most of a second.
+func parallel(jobs ...func() error) error {
+	errs := make([]error, len(jobs))
+	var wg sync.WaitGroup
+	for i, job := range jobs {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs[i] = job() }()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func (c *cloudflareAccess) add(ctx context.Context, v viewer, id string, emails []string) ([]string, error) {

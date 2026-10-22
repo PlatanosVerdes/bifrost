@@ -116,8 +116,9 @@ func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, admin := a.who(r)
-	if !admin {
-		writeJSON(w, map[string]any{"enabled": true, "me": v.email, "admin": false})
+	// The lists cost several Cloudflare round trips, so only the Share dialog asks for them.
+	if !admin || r.URL.Query().Get("lists") == "" {
+		writeJSON(w, map[string]any{"enabled": true, "me": v.email, "admin": admin})
 		return
 	}
 	s, err := a.provider.site(r.Context(), v)
