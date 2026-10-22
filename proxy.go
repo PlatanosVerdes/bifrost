@@ -249,6 +249,9 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	headers := r.Header.Clone()
 	headers.Del("Range") // live: there is nothing to seek to, and joiners never asked for it
+	for _, k := range []string{"Cf-Access-Jwt-Assertion", "Cookie", "Authorization"} {
+		headers.Del(k)
+	}
 	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
 		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel, ctx: ctx, headers: headers,
 		handover: make(chan handover), swarm: &swarm{threshold: h.policy.starvingBelow}}

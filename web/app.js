@@ -403,9 +403,10 @@ class ShareDialog extends LitElement {
 
   members(group) {
     if (!group.members.length) return html`<li class="muted">Nobody yet.</li>`;
+    const me = this.access.me?.toLowerCase();
     return group.members.map((m) => html`<li>${avatar(m)}
-      <span class="who">${m}${m === this.access.me ? html`<small>you</small>` : this.invited(m)}</span>
-      ${group.editable && m !== this.access.me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
+      <span class="who">${m}${m === me ? html`<small>you</small>` : this.invited(m)}</span>
+      ${group.editable && m !== me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
   }
 
   render() {

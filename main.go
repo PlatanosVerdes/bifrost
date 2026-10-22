@@ -56,7 +56,9 @@ func main() {
 	}()
 
 	log.Printf("bifrost %s: %s -> %s, playlist %s", buildVersion, cfg.listenAddr, cfg.aceserveBaseURL, cfg.outputFile)
-	log.Fatal(http.ListenAndServe(cfg.listenAddr, routes(h, newAccess(cfg))))
+	// No WriteTimeout: a stream answer lasts as long as the match.
+	srv := &http.Server{Addr: cfg.listenAddr, Handler: routes(h, newAccess(cfg)), ReadHeaderTimeout: 10 * time.Second}
+	log.Fatal(srv.ListenAndServe())
 }
 
 func routes(h *hub, acc *access) *http.ServeMux {
