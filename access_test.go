@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -108,6 +109,11 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 		ok(w, f.apps[page-1], len(f.apps))
 	})
 	mux.HandleFunc("GET "+api+"/policies", func(w http.ResponseWriter, r *http.Request) { ok(w, f.pols, 1) })
+	mux.HandleFunc("GET "+api+"/groups", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		ok(w, slices.Collect(maps.Values(f.groups)), 1)
+	})
 	mux.HandleFunc("GET "+api+"/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -483,4 +489,29 @@ func TestInviteLogKeepsWhoIsStillOnAList(t *testing.T) {
 	if _, ok := got["gone@example.com"]; ok {
 		t.Fatal("gone@ is on no list any more and should have been dropped")
 	}
+}
+
+// Nested in a group another app uses, so an invite would also open that app.
+func TestAccessNestedGroupIsShared(t *testing.T) {
+	f := newFakeCloudflare(t)
+	f.apps[1][0]["policies"] = []any{map[string]any{"id": "p-photos", "include": []any{map[string]any{"group": map[string]any{"id": "g-parent"}}}}}
+	f.groups["g-parent"] = map[string]any{"id": "g-parent", "name": "Photos users", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}}
+	a := f.access("boss@example.com")
+	if w := change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`); w.Code != http.StatusNotFound || len(f.puts) != 0 {
+		t.Fatalf("got %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
+	}
+	if _, got, raw := get(t, a, f.token("boss@example.com")); got.Groups[0].ID != "g-own" || got.Groups[0].Editable {
+		t.Fatalf("g-own offered as editable: %s", raw)
+	}
+}
+
+func change(t *testing.T, f *fakeCloudflare, a *access, method, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, "/api/access/members", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "https://tv.example.com")
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	w := httptest.NewRecorder()
+	a.serveMembers(w, r)
+	return w
 }
