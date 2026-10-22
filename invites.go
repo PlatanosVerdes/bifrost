@@ -41,19 +41,38 @@ func loadInvites(dir string) *inviteLog {
 func (l *inviteLog) record(emails []string, by string, at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	changed := false
 	for _, e := range emails {
 		if _, ok := l.byTo[e]; !ok {
 			l.byTo[e] = invite{By: by, At: at.UTC()}
+			changed = true
 		}
 	}
-	l.save()
+	if changed {
+		l.save()
+	}
 }
 
-func (l *inviteLog) forget(email string) {
+// keep forgets everyone on none of the lists, also people removed in the provider's own dashboard.
+func (l *inviteLog) keep(lists []accessList) {
+	on := map[string]bool{}
+	for _, list := range lists {
+		for _, m := range list.Members {
+			on[m] = true
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.byTo, email)
-	l.save()
+	changed := false
+	for e := range l.byTo {
+		if !on[e] {
+			delete(l.byTo, e)
+			changed = true
+		}
+	}
+	if changed {
+		l.save()
+	}
 }
 
 // of returns the invites of the given members; people added outside bifrost have none.
@@ -75,13 +94,27 @@ func (l *inviteLog) save() {
 	if l.path == "" {
 		return
 	}
+	if err := l.write(); err != nil {
+		log.Printf("[access] could not save invites: %v", err)
+	}
+}
+
+func (l *inviteLog) write() error {
 	b, _ := json.MarshalIndent(l.byTo, "", "  ")
 	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		log.Printf("[access] could not save invites: %v", err)
-		return
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
 	}
-	if err := os.Rename(tmp, l.path); err != nil {
-		log.Printf("[access] could not save invites: %v", err)
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
 	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp, l.path)
 }

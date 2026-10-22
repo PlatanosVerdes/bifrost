@@ -13,6 +13,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -429,5 +431,56 @@ func TestInviteLog(t *testing.T) {
 	}
 	if _, ok := loadInvites(dir).byTo["bob@example.com"]; ok {
 		t.Fatal("removed but still on disk")
+	}
+}
+
+// Only people the change really added are credited: ana was put on the list in the dashboard.
+func TestInviteLogCreditsOnlyNewMembers(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	r := httptest.NewRequest("POST", "/api/access/members", strings.NewReader(`{"group":"g-own","emails":["ANA@example.com","bob@example.com"]}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	w := httptest.NewRecorder()
+	a.serveMembers(w, r)
+	var reply struct {
+		Invites map[string]invite `json:"invites"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if _, ok := reply.Invites["ana@example.com"]; ok || reply.Invites["bob@example.com"].By != "boss@example.com" {
+		t.Fatalf("invites %+v, want only bob", reply.Invites)
+	}
+}
+
+func TestInviteLogKeepsWhoIsStillOnAList(t *testing.T) {
+	f := newFakeCloudflare(t)
+	dir := t.TempDir()
+	stale := map[string]invite{
+		"dad@example.com":  {By: "boss@example.com", At: time.Now().UTC()},
+		"gone@example.com": {By: "boss@example.com", At: time.Now().UTC()},
+	}
+	b, _ := json.Marshal(stale)
+	if err := os.WriteFile(filepath.Join(dir, "invites.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.groups["g-own"]["include"] = append(f.groups["g-own"]["include"].([]any), map[string]any{"email": map[string]any{"email": "dad@example.com"}})
+	a := newAccess(config{admins: "boss@example.com", stateDir: dir})
+	a.provider = f.provider()
+	r := httptest.NewRequest("DELETE", "/api/access/members", strings.NewReader(`{"group":"g-own","email":"dad@example.com"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	w := httptest.NewRecorder()
+	a.serveMembers(w, r)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	got := loadInvites(dir).byTo
+	if _, ok := got["dad@example.com"]; !ok {
+		t.Fatal("dad left g-own but is still on Family, yet his invite was forgotten")
+	}
+	if _, ok := got["gone@example.com"]; ok {
+		t.Fatal("gone@ is on no list any more and should have been dropped")
 	}
 }

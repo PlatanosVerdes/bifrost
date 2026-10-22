@@ -19,7 +19,8 @@ type accessProvider interface {
 	// An error means nobody: the identity counts only when the provider's signature proves it.
 	viewer(r *http.Request) (viewer, error)
 	site(ctx context.Context, v viewer) (site, error)
-	add(ctx context.Context, v viewer, list string, emails []string) error
+	// add returns the emails that were not on the list yet.
+	add(ctx context.Context, v viewer, list string, emails []string) ([]string, error)
 	remove(ctx context.Context, v viewer, list, email string) error
 }
 
@@ -154,8 +155,9 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "Give at least one email address")
 			return
 		}
-		if err = a.provider.add(r.Context(), v, body.Group, emails); err == nil {
-			a.invites.record(emails, strings.ToLower(v.email), time.Now())
+		var added []string
+		if added, err = a.provider.add(r.Context(), v, body.Group, emails); err == nil {
+			a.invites.record(added, strings.ToLower(v.email), time.Now())
 		}
 	} else {
 		var email []string
@@ -163,9 +165,7 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err = a.provider.remove(r.Context(), v, body.Group, email[0]); err == nil {
-			a.invites.forget(email[0])
-		}
+		err = a.provider.remove(r.Context(), v, body.Group, email[0])
 	}
 	if err != nil {
 		providerError(w, err)
@@ -175,6 +175,7 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
+	a.invites.keep(s.lists)
 	writeJSON(w, a.adminPayload(v, s))
 }
 
