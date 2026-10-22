@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -142,7 +143,7 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 func (f *fakeCloudflare) team() string { return strings.TrimPrefix(f.srv.URL, "https://") }
 
 func (f *fakeCloudflare) provider() *cloudflareAccess {
-	c := newCloudflareAccess(f.team(), "acc", "secret-token")
+	c := newCloudflareAccess(f.team(), "aud-tv", "acc", "secret-token")
 	c.api = f.srv.URL + "/client/v4"
 	c.client = f.srv.Client()
 	return c
@@ -154,10 +155,13 @@ func (f *fakeCloudflare) access(admins string) *access {
 	return a
 }
 
-func (f *fakeCloudflare) token(email string) string {
+func (f *fakeCloudflare) token(email string) string { return f.tokenFor(email, "aud-tv") }
+
+// tokenFor is a token the same team issued for the app with the given AUD tag.
+func (f *fakeCloudflare) tokenFor(email, aud string) string {
 	key, _ := testKeys(nil)
 	return signJWT(key, "RS256", "k1", map[string]any{
-		"iss": "https://" + f.team(), "aud": []string{"aud-tv"}, "email": email, "exp": time.Now().Add(time.Hour).Unix(),
+		"iss": "https://" + f.team(), "aud": []string{aud}, "email": email, "exp": time.Now().Add(time.Hour).Unix(),
 	})
 }
 
@@ -169,10 +173,16 @@ func TestAccessTokens(t *testing.T) {
 	claims := func(iss string, exp int64) map[string]any {
 		return map[string]any{"iss": iss, "aud": "aud-tv", "email": "ana@example.com", "exp": exp}
 	}
+	forApp := func(aud any) map[string]any {
+		return map[string]any{"iss": iss, "aud": aud, "email": "ana@example.com", "exp": hour}
+	}
 	for _, c := range []struct {
 		name, token, want, err string
 	}{
 		{"valid", signJWT(key, "RS256", "k1", claims(iss, hour)), "ana@example.com", ""},
+		{"one of several audiences", signJWT(key, "RS256", "k1", forApp([]string{"aud-photos", "aud-tv"})), "ana@example.com", ""},
+		{"another app of the team", signJWT(key, "RS256", "k1", forApp([]string{"aud-photos"})), "", "audience"},
+		{"no audience", signJWT(key, "RS256", "k1", forApp([]string{})), "", "audience"},
 		{"expired", signJWT(key, "RS256", "k1", claims(iss, time.Now().Add(-time.Hour).Unix())), "", "expired"},
 		{"no expiry", signJWT(key, "RS256", "k1", claims(iss, 0)), "", "expired"},
 		{"another team", signJWT(key, "RS256", "k1", claims("https://evil.cloudflareaccess.com", hour)), "", "issuer"},
@@ -189,7 +199,7 @@ func TestAccessTokens(t *testing.T) {
 			}
 			v, err := f.provider().viewer(r)
 			if c.err == "" {
-				if err != nil || v.email != c.want || !reflect.DeepEqual(v.instance, []string{"aud-tv"}) {
+				if err != nil || v.email != c.want {
 					t.Fatalf("got %+v, %v; want %s", v, err, c.want)
 				}
 				return
@@ -231,6 +241,7 @@ func TestAccessGet(t *testing.T) {
 	}
 	for _, c := range []struct{ name, token, me string }{
 		{"not signed in", "", ""},
+		{"an admin through another app of the team", f.tokenFor("boss@example.com", "aud-photos"), ""},
 		{"a viewer", f.token("ana@example.com"), "ana@example.com"},
 	} {
 		code, got, raw := get(t, a, c.token)
@@ -273,6 +284,7 @@ func TestAccessMembers(t *testing.T) {
 		{"a group another app uses", "POST", "boss", "application/json", own, `{"group":"g-family","emails":["bob@example.com"]}`, 404, "That list cannot be edited from bifrost", []string{"ana@example.com"}, 0},
 		{"a group not on this app", "POST", "boss", "application/json", own, `{"group":"g-elsewhere","emails":["bob@example.com"]}`, 404, "That list cannot be edited from bifrost", []string{"ana@example.com"}, 0},
 		{"a viewer", "POST", "ana", "application/json", own, `{"group":"g-own","emails":["bob@example.com"]}`, 403, "Only an admin", []string{"ana@example.com"}, 0},
+		{"an admin through another app of the team", "POST", "boss@photos", "application/json", own, `{"group":"g-own","emails":["bob@example.com"]}`, 403, "Only an admin", []string{"ana@example.com"}, 0},
 		{"not signed in", "POST", "", "application/json", own, `{"group":"g-own","emails":["bob@example.com"]}`, 403, "Only an admin", []string{"ana@example.com"}, 0},
 		{"a form post", "POST", "boss", "application/x-www-form-urlencoded", own, `{"group":"g-own","emails":["bob@example.com"]}`, 415, "JSON", []string{"ana@example.com"}, 0},
 		{"another site", "POST", "boss", "application/json", "https://evil.example", `{"group":"g-own","emails":["bob@example.com"]}`, 403, "another site", []string{"ana@example.com"}, 0},
@@ -288,8 +300,8 @@ func TestAccessMembers(t *testing.T) {
 			if c.origin != "" {
 				r.Header.Set("Origin", c.origin)
 			}
-			if c.who != "" {
-				r.Header.Set("Cf-Access-Jwt-Assertion", f.token(c.who+"@example.com"))
+			if who, app, _ := strings.Cut(c.who, "@"); who != "" {
+				r.Header.Set("Cf-Access-Jwt-Assertion", f.tokenFor(who+"@example.com", "aud-"+cmp.Or(app, "tv")))
 			}
 			w := httptest.NewRecorder()
 			a.serveMembers(w, r)
@@ -345,10 +357,14 @@ func TestAccessRefusesToEmptyAGroup(t *testing.T) {
 }
 
 func TestAccessOffWithoutConfig(t *testing.T) {
+	if newAccess(config{accessTeamDomain: "t", accessAUD: "a", cloudflareAccountID: "acc", cloudflareAPIToken: "tok"}).provider == nil {
+		t.Fatal("sharing off with everything set")
+	}
 	for _, cfg := range []config{
 		{},
-		{accessTeamDomain: "example.cloudflareaccess.com", cloudflareAccountID: "acc"},
-		{cloudflareAccountID: "acc", cloudflareAPIToken: "tok"},
+		{accessTeamDomain: "example.cloudflareaccess.com", cloudflareAccountID: "acc", cloudflareAPIToken: "tok"},
+		{accessTeamDomain: "example.cloudflareaccess.com", accessAUD: "aud", cloudflareAccountID: "acc"},
+		{accessAUD: "aud", cloudflareAccountID: "acc", cloudflareAPIToken: "tok"},
 	} {
 		a := newAccess(cfg)
 		if a.provider != nil {

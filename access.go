@@ -28,8 +28,7 @@ type accessProvider interface {
 }
 
 type viewer struct {
-	email    string
-	instance []string // the provider's handles for the instance the request came through
+	email string
 }
 
 type site struct {
@@ -66,11 +65,11 @@ func newAccess(cfg config) *access {
 		}
 	}
 	switch {
-	case cfg.accessTeamDomain != "" && cfg.cloudflareAccountID != "" && cfg.cloudflareAPIToken != "":
-		a.provider = newCloudflareAccess(cfg.accessTeamDomain, cfg.cloudflareAccountID, cfg.cloudflareAPIToken)
+	case cfg.accessTeamDomain != "" && cfg.accessAUD != "" && cfg.cloudflareAccountID != "" && cfg.cloudflareAPIToken != "":
+		a.provider = newCloudflareAccess(cfg.accessTeamDomain, cfg.accessAUD, cfg.cloudflareAccountID, cfg.cloudflareAPIToken)
 		log.Printf("[access] sharing through Cloudflare Access %s, %d admins", cfg.accessTeamDomain, len(a.admins))
 	case cfg.accessTeamDomain != "":
-		log.Printf("[access] sharing is off: ACCESS_TEAM_DOMAIN is set but CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN is not")
+		log.Printf("[access] sharing is off: ACCESS_TEAM_DOMAIN is set but ACCESS_AUD, CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN is not")
 	}
 	return a
 }

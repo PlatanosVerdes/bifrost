@@ -67,6 +67,7 @@ bifrost:
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](#moving-to-a-better-source)) |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](#sharing) |
+| `ACCESS_AUD` | empty (sharing off) | This bifrost's Access app's tag: Access app → Overview → Application Audience (AUD) Tag. Tokens for any other app are refused |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty (sharing off) | The account that holds the Access app, and an account-owned token with Access: Apps and Policies Read and Access: Organizations, Identity Providers, and Groups Edit |
 | `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page |
 
@@ -113,14 +114,16 @@ recordings are made from these channels.
 ### Sharing
 
 The page can be opened from outside the house through a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
-app in front of bifrost, one app per bifrost. With `ACCESS_TEAM_DOMAIN`, `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN` set, the page shows who is signed in, and an admin (`BIFROST_ADMINS`) gets a
+app in front of bifrost, one app per bifrost. With `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`,
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` set, the page shows who is signed in, and an admin (`BIFROST_ADMINS`) gets a
 Share… button to invite people by email and remove them.
 
 bifrost needs no names. It reads who is looking only from the JWT Access signs into
 `Cf-Access-Jwt-Assertion`, checked against the team's keys, never from a header or a host name a
-proxy can change. The JWT's `aud` is the app's tag, which finds the app in the account; the link is the
-app's domain, and the lists are the Access groups its policies include, inline or reusable. A group
+proxy can change. The JWT's `aud` must be `ACCESS_AUD`, the tag on the app's Overview page under
+Application Audience (AUD) Tag: bifrost is also reachable without Cloudflare (on the LAN or a
+tailnet), where a token the same team issued for another app could otherwise be replayed. The tag
+finds the app in the account; the link is the app's domain, and the lists are the Access groups its policies include, inline or reusable. A group
 another Access app also uses is shown but never edited, since changing it would change who opens
 that app too. Editing a group only adds or removes its `email` rules; any other rule in it (a whole
 domain, a login method) stays as it is. bifrost never creates or deletes groups, policies or apps:

@@ -21,7 +21,7 @@ import (
 )
 
 // Cloudflare Access in front of bifrost. Every request it lets through carries a JWT signed by the
-// team's keys; its aud names the Access app, which is how this instance finds its app, its link and
+// team's keys and meant for this instance's app (ACCESS_AUD); that tag finds the app, its link and
 // its lists (Access groups) through the API without knowing any names.
 
 const (
@@ -34,6 +34,7 @@ const (
 
 type cloudflareAccess struct {
 	team    string // example.cloudflareaccess.com
+	aud     string // the app's Application Audience (AUD) tag
 	account string
 	token   string
 	api     string
@@ -44,20 +45,19 @@ type cloudflareAccess struct {
 	keysAt   time.Time
 	certsURL string
 
-	mu    sync.Mutex
-	snaps map[string]cfSnapshot // by aud
+	mu   sync.Mutex
+	snap cfSnapshot
 
 	editMu sync.Mutex // a group edit is a read and a write; two at once would lose one
 }
 
-func newCloudflareAccess(team, account, token string) *cloudflareAccess {
+func newCloudflareAccess(team, aud, account, token string) *cloudflareAccess {
 	team = strings.TrimSuffix(strings.TrimPrefix(team, "https://"), "/")
 	return &cloudflareAccess{
-		team: team, account: account, token: token, api: cfAPI,
+		team: team, aud: aud, account: account, token: token, api: cfAPI,
 		client:   &http.Client{Timeout: 10 * time.Second},
 		certsURL: "https://" + team + "/cdn-cgi/access/certs",
 		keys:     map[string]*rsa.PublicKey{},
-		snaps:    map[string]cfSnapshot{},
 	}
 }
 
@@ -72,7 +72,7 @@ func (c *cloudflareAccess) viewer(r *http.Request) (viewer, error) {
 	if err != nil {
 		return viewer{}, err
 	}
-	return viewer{email: claims.Email, instance: claims.Aud}, nil
+	return viewer{email: claims.Email}, nil
 }
 
 type cfClaims struct {
@@ -132,8 +132,10 @@ func (c *cloudflareAccess) verify(tok string, now time.Time) (cfClaims, error) {
 	if claims.Nbf != 0 && now.Add(cfClockSkew).Before(time.Unix(int64(claims.Nbf), 0)) {
 		return claims, errors.New("not valid yet")
 	}
-	if len(claims.Aud) == 0 {
-		return claims, errors.New("no audience")
+	// Without this, a token another app of the team issued would pass, and bifrost is not only
+	// reachable through Cloudflare.
+	if !slices.Contains(claims.Aud, c.aud) {
+		return claims, fmt.Errorf("audience %v is not this app", claims.Aud)
 	}
 	return claims, nil
 }
@@ -252,17 +254,15 @@ func ruleGroups(rules []json.RawMessage) []string {
 	return ids
 }
 
-// snapshot finds the app the viewer came through and which of its groups other apps also use.
+// snapshot finds this instance's app and which of its groups other apps also use.
 // Edits ask for a fresh one: a group attached to another app a minute ago is no longer ours.
-func (c *cloudflareAccess) snapshot(ctx context.Context, v viewer, fresh bool) (cfSnapshot, error) {
+func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot, error) {
 	c.mu.Lock()
-	for _, aud := range v.instance {
-		if s, ok := c.snaps[aud]; ok && !fresh && time.Since(s.at) < cfSnapshotTTL {
-			c.mu.Unlock()
-			return s, nil
-		}
-	}
+	s := c.snap
 	c.mu.Unlock()
+	if !fresh && !s.at.IsZero() && time.Since(s.at) < cfSnapshotTTL {
+		return s, nil
+	}
 
 	var apps []cfApp
 	if err := c.list(ctx, "/access/apps", &apps); err != nil {
@@ -298,15 +298,15 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, v viewer, fresh bool) (
 				appsOf[g][app.ID] = true
 			}
 		}
-		if app.AUD != "" && mine == nil && slices.Contains(v.instance, app.AUD) {
+		if app.AUD == c.aud {
 			mine = &apps[i]
 		}
 	}
 	if mine == nil {
-		return cfSnapshot{}, fmt.Errorf("no Access app has aud %v", v.instance)
+		return cfSnapshot{}, fmt.Errorf("no Access app in the account has the AUD tag %s", c.aud)
 	}
 
-	s := cfSnapshot{link: "https://" + mine.Domain, shared: map[string]bool{}, at: time.Now()}
+	s = cfSnapshot{link: "https://" + mine.Domain, shared: map[string]bool{}, at: time.Now()}
 	for _, d := range append([]string{mine.Domain}, mine.SelfHostedDomains...) {
 		if host, _, _ := strings.Cut(d, "/"); host != "" {
 			if o := "https://" + strings.ToLower(host); !slices.Contains(s.origins, o) {
@@ -330,13 +330,13 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, v viewer, fresh bool) (
 	}
 
 	c.mu.Lock()
-	c.snaps[mine.AUD] = s
+	c.snap = s
 	c.mu.Unlock()
 	return s, nil
 }
 
 func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
-	s, err := c.snapshot(ctx, v, false)
+	s, err := c.snapshot(ctx, false)
 	if err != nil {
 		return site{}, err
 	}
@@ -383,7 +383,7 @@ func (c *cloudflareAccess) remove(ctx context.Context, v viewer, id, email strin
 
 // edit rewrites one editable group's include rules, leaving every other field and rule kind as is.
 func (c *cloudflareAccess) edit(ctx context.Context, v viewer, id string, change func([]json.RawMessage) []json.RawMessage) error {
-	s, err := c.snapshot(ctx, v, true)
+	s, err := c.snapshot(ctx, true)
 	if err != nil {
 		return err
 	}
