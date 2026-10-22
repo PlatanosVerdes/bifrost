@@ -348,8 +348,9 @@ func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
 	return out, nil
 }
 
-func (c *cloudflareAccess) add(ctx context.Context, v viewer, id string, emails []string) error {
-	return c.edit(ctx, v, id, func(include []json.RawMessage) []json.RawMessage {
+func (c *cloudflareAccess) add(ctx context.Context, v viewer, id string, emails []string) ([]string, error) {
+	var added []string
+	err := c.edit(ctx, v, id, func(include []json.RawMessage) []json.RawMessage {
 		have := map[string]bool{}
 		for _, raw := range include {
 			if r := parseRule(raw); r.Email != nil {
@@ -358,12 +359,18 @@ func (c *cloudflareAccess) add(ctx context.Context, v viewer, id string, emails 
 		}
 		for _, e := range emails {
 			if !have[e] {
+				have[e] = true
+				added = append(added, e)
 				rule, _ := json.Marshal(map[string]any{"email": map[string]string{"email": e}})
 				include = append(include, rule)
 			}
 		}
 		return include
 	})
+	if err != nil {
+		return nil, err
+	}
+	return added, nil
 }
 
 func (c *cloudflareAccess) remove(ctx context.Context, v viewer, id, email string) error {
