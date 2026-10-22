@@ -66,6 +66,9 @@ bifrost:
 | `ORPHAN_AFTER` | `15m` | Let go a stream only Jellyfin holds once no Jellyfin session has played it for this long; `0` turns it off. Needs `JELLYFIN_URL` |
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](#moving-to-a-better-source)) |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
+| `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](#sharing) |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty (sharing off) | The account that holds the Access app, and an account-owned token with Access: Apps and Policies Read and Access: Organizations, Identity Providers, and Groups Edit |
+| `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page |
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
 (as Jellyfin sees those paths).
@@ -79,6 +82,8 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /ace/getstream?id=<id>` | One source, as the engine would serve it (shared the same way) |
 | `GET /api/channels` | Every channel with its group, logo, tvg-id and sources (the one that last played first), what is playing on it now, its last open since bifrost started, and what it airs now and next by the guide |
 | `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, the programme on air and the next one, from guide.xml, its `swarm`, and whether it is probing another source, how often it switched and its last switch and probe, see below), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (which user on which device and client, copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
+| `GET /api/access` | Whether sharing is on, and who is looking (`me`, `admin`). For an admin, also the link to send and the lists of people the Access app lets in, each with its members and whether bifrost may edit it |
+| `POST`, `DELETE /api/access/members` | Add addresses to a list (`{"group", "emails"}`) or take one off (`{"group", "email"}`). Admins only; answers what `GET /api/access` does |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
@@ -104,6 +109,23 @@ requested` line names who opened a stream, `Jellyfin` or `direct: <User-Agent>`.
 The 15 minutes are well past the five or six Jellyfin itself takes to notice a TV switched off
 without a stop. A Jellyfin recording has no playing session either, so set it higher, or `0`, if
 recordings are made from these channels.
+
+### Sharing
+
+The page can be opened from outside the house through a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+app in front of bifrost, one app per bifrost. With `ACCESS_TEAM_DOMAIN`, `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` set, the page shows who is signed in, and an admin (`BIFROST_ADMINS`) gets a
+Share… button to invite people by email and remove them.
+
+bifrost needs no names. It reads who is looking only from the JWT Access signs into
+`Cf-Access-Jwt-Assertion`, checked against the team's keys, never from a header or a host name a
+proxy can change. The JWT's `aud` is the app's tag, which finds the app in the account; the link is the
+app's domain, and the lists are the Access groups its policies include, inline or reusable. A group
+another Access app also uses is shown but never edited, since changing it would change who opens
+that app too. Editing a group only adds or removes its `email` rules; any other rule in it (a whole
+domain, a login method) stays as it is. bifrost never creates or deletes groups, policies or apps:
+make the app, a policy, and a group of its own for it in Cloudflare once, and manage the people
+from the page.
 
 ### The swarm
 

@@ -38,6 +38,11 @@ type config struct {
 	pushgatewayURL  string
 	jellyfinURL     string
 	jellyfinAPIKey  string
+	// Sharing (see access.go): off unless the team domain, account and token are all set.
+	accessTeamDomain    string
+	cloudflareAccountID string
+	cloudflareAPIToken  string
+	admins              string // comma-separated emails that may change who has access
 }
 
 func loadConfig() config {
@@ -58,6 +63,11 @@ func loadConfig() config {
 		pushgatewayURL:  os.Getenv("PUSHGATEWAY_URL"),
 		jellyfinURL:     mustEnv("JELLYFIN_URL"),
 		jellyfinAPIKey:  mustEnv("JELLYFIN_API_KEY"),
+
+		accessTeamDomain:    os.Getenv("ACCESS_TEAM_DOMAIN"),
+		cloudflareAccountID: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		cloudflareAPIToken:  os.Getenv("CLOUDFLARE_API_TOKEN"),
+		admins:              os.Getenv("BIFROST_ADMINS"),
 	}
 }
 
