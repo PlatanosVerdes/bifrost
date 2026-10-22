@@ -208,7 +208,7 @@ func (c *cloudflareAccess) fetchKeys() (map[string]*rsa.PublicKey, error) {
 type cfSnapshot struct {
 	link    string
 	origins []string
-	groups  []string        // ids in this app's include rules, in policy order
+	groups  []string        // ids in this app's allow rules, in policy order
 	shared  map[string]bool // also referenced by another app, or nested in a group
 	doubt   string          // why no group may be edited: a rule bifrost could not read may name any of them
 	at      time.Time
@@ -223,7 +223,8 @@ type cfApp struct {
 }
 
 type cfPolicy struct {
-	ID string `json:"id"`
+	ID       string `json:"id"`
+	Decision string `json:"decision"`
 	cfRules
 }
 
@@ -347,7 +348,16 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 		}
 	}
 	for _, p := range mine.Policies {
-		include, _ := ruleGroups(rules(*mine, p).Include)
+		p = rules(*mine, p)
+		if p.Decision != "allow" {
+			// Adding someone to a deny or bypass list would block them or skip the login, not share.
+			ids, _ := p.groups()
+			for _, g := range ids {
+				s.shared[g] = true
+			}
+			continue
+		}
+		include, _ := ruleGroups(p.Include)
 		for _, g := range include {
 			if !slices.Contains(s.groups, g) {
 				s.groups = append(s.groups, g)

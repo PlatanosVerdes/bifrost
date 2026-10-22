@@ -72,16 +72,16 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 			{{
 				"id": "app-tv", "domain": "tv.example.com", "aud": "aud-tv", "self_hosted_domains": []string{"tv.example.com", "tv.example.net/path"},
 				"policies": []any{
-					map[string]any{"id": "p-legacy", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}},
-					map[string]any{"id": "p-family", "reusable": true},
+					map[string]any{"id": "p-legacy", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}},
+					map[string]any{"id": "p-family", "decision": "allow", "reusable": true},
 				},
 			}},
 			{{
 				"id": "app-photos", "domain": "photos.example.com", "aud": "aud-photos",
-				"policies": []any{map[string]any{"id": "p-family", "reusable": true, "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
+				"policies": []any{map[string]any{"id": "p-family", "decision": "allow", "reusable": true, "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
 			}},
 		},
-		pols: []map[string]any{{"id": "p-family", "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
+		pols: []map[string]any{{"id": "p-family", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
 		groups: map[string]map[string]any{
 			"g-own": {"id": "g-own", "name": "TV viewers", "is_default": false, "include": []any{
 				map[string]any{"email": map[string]any{"email": "Ana@example.com"}},
@@ -540,5 +540,27 @@ func TestAccessFailsClosedOnRulesItCannotRead(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Only an allow policy shares the page: a deny or bypass list is not one to invite people into.
+func TestAccessOffersOnlyAllowLists(t *testing.T) {
+	f := newFakeCloudflare(t)
+	f.apps[0][0]["policies"] = append(f.apps[0][0]["policies"].([]any),
+		map[string]any{"id": "p-deny", "decision": "deny", "include": []any{map[string]any{"group": map[string]any{"id": "g-blocked"}}}},
+		map[string]any{"id": "p-bypass", "decision": "bypass", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}})
+	f.groups["g-blocked"] = map[string]any{"id": "g-blocked", "name": "Blocked", "include": []any{map[string]any{"email": map[string]any{"email": "x@example.com"}}}}
+	a := f.access("boss@example.com")
+	_, got, raw := get(t, a, f.token("boss@example.com"))
+	if len(got.Groups) != 2 || got.Groups[0].ID != "g-own" || got.Groups[0].Editable || got.Groups[1].ID != "g-family" {
+		t.Fatalf("want g-own (not editable, also bypass) and g-family only: %s", raw)
+	}
+	for _, body := range []string{`{"group":"g-blocked","emails":["x2@example.com"]}`, `{"group":"g-own","emails":["x2@example.com"]}`} {
+		if w := change(t, f, a, "POST", body); w.Code != http.StatusNotFound {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if len(f.puts) != 0 {
+		t.Fatalf("%d PUTs", len(f.puts))
 	}
 }
