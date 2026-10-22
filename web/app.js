@@ -7,9 +7,12 @@ const REFRESH_MS = 10000;
 
 // Drawn here from the email, so the address never leaves the page.
 const avatars = new Map();
+const nobody = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#8b90a7"><circle cx="16" cy="12" r="6"/><path d="M5 28c1.5-6 6-9 11-9s9.5 3 11 9z"/></svg>');
 const avatar = (email) => {
-  if (!avatars.has(email)) avatars.set(email, createAvatar(pixelArt, { seed: email.toLowerCase() }).toDataUri());
-  return html`<img class="avatar" src=${avatars.get(email)} alt="">`;
+  if (email && !avatars.has(email)) {
+    try { avatars.set(email, createAvatar(pixelArt, { seed: email.toLowerCase() }).toDataUri()); } catch { avatars.set(email, nobody); }
+  }
+  return html`<img class="avatar" src=${email ? avatars.get(email) : nobody} alt="">`;
 };
 
 // --- formatting, shared by every component ---------------------------------------------------
@@ -453,7 +456,7 @@ class BifrostApp extends LitElement {
     .me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); image-rendering: pixelated; }
     .menu { inset: auto; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink);
-      padding: 14px; min-width: 220px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
+      padding: 14px; min-width: 220px; max-width: min(300px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
     .menu .who { display: flex; align-items: center; gap: 10px; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
     .menu .avatar { width: 40px; height: 40px; }
     .menu a { display: block; text-align: center; font-size: 13px; font-weight: 600; color: var(--ink); text-decoration: none;
@@ -511,10 +514,11 @@ class BifrostApp extends LitElement {
           ${this.access?.admin ? html`<button class="share" @click=${() => this.renderRoot.querySelector("share-dialog").open()}>Share…</button>` : nothing}
           <span class="chip">${s?.version ?? "…"}</span>
           <span class="pill"><span class="dot ${healthy ? "ok" : "bad"}"></span>${!this.reachable ? "Not answering" : healthy ? "Healthy" : s ? "No list yet" : "Loading"}</span>
-          ${this.access?.me ? html`<button class="me" popovertarget="me-menu" aria-label="Account: ${this.access.me}">${avatar(this.access.me)}</button>
+          ${this.access?.enabled ? html`<button class="me" popovertarget="me-menu" aria-label=${this.access.me ? `Account: ${this.access.me}` : "Not signed in"}>${avatar(this.access.me)}</button>
             <div class="menu" id="me-menu" popover @toggle=${(e) => this.placeMenu(e)}>
-              <div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div>
-              <a href="/cdn-cgi/access/logout">Sign out</a>
+              ${this.access.me
+                ? html`<div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div><a href="/cdn-cgi/access/logout">Sign out</a>`
+                : html`<div class="who">${avatar("")}<span>Not signed in. Open this page through its public address to sign in.</span></div>`}
             </div>` : nothing}
         </div>
       </header>
