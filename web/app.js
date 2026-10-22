@@ -1,8 +1,16 @@
 // bifrost's status page: Lit components, one class per piece. The app element fetches, everything
 // below it renders what it is given. Nothing here opens a channel.
 import { LitElement, html, css, nothing } from "./vendor/lit-all.min.js";
+import { createAvatar, pixelArt } from "./vendor/dicebear-pixel-art.min.js";
 
 const REFRESH_MS = 10000;
+
+// Drawn here from the email, so the address never leaves the page.
+const avatars = new Map();
+const avatar = (email) => {
+  if (!avatars.has(email)) avatars.set(email, createAvatar(pixelArt, { seed: email.toLowerCase() }).toDataUri());
+  return html`<img class="avatar" src=${avatars.get(email)} alt="">`;
+};
 
 // --- formatting, shared by every component ---------------------------------------------------
 
@@ -344,8 +352,7 @@ class ShareDialog extends LitElement {
     ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
     li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
     li:first-child { border-top: 0; }
-    .avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 12px; font-weight: 700;
-      background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); text-transform: uppercase; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; background: var(--chip); image-rendering: pixelated; }
     .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .who small { display: block; color: var(--muted); font-size: 12px; }
     .remove { font-size: 12px; padding: 5px 10px; }
@@ -386,7 +393,7 @@ class ShareDialog extends LitElement {
 
   members(group) {
     if (!group.members.length) return html`<li class="muted">Nobody yet.</li>`;
-    return group.members.map((m) => html`<li><span class="avatar" aria-hidden="true">${m[0]}</span>
+    return group.members.map((m) => html`<li>${avatar(m)}
       <span class="who">${m}${m === this.access.me ? html`<small>you</small>` : nothing}</span>
       ${group.editable && m !== this.access.me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
   }
@@ -442,6 +449,16 @@ class BifrostApp extends LitElement {
     .note { color: var(--muted); font-size: 12px; margin-top: 28px; max-width: 72ch; }
     .share { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
     .share:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .me { background: none; border: 0; padding: 0; border-radius: 50%; cursor: pointer; display: flex; }
+    .me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); image-rendering: pixelated; }
+    .menu { inset: auto; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink);
+      padding: 14px; min-width: 220px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
+    .menu .who { display: flex; align-items: center; gap: 10px; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
+    .menu .avatar { width: 40px; height: 40px; }
+    .menu a { display: block; text-align: center; font-size: 13px; font-weight: 600; color: var(--ink); text-decoration: none;
+      border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; background: var(--chip); }
+    .menu a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
 
   constructor() {
@@ -475,6 +492,13 @@ class BifrostApp extends LitElement {
     }
   }
 
+  // A popover sits in the top layer, so it is placed under its button by hand.
+  placeMenu(e) {
+    if (e.newState !== "open") return;
+    const b = this.renderRoot.querySelector(".me").getBoundingClientRect();
+    Object.assign(e.target.style, { top: `${b.bottom + 8}px`, right: `${Math.max(16, innerWidth - b.right)}px` });
+  }
+
   render() {
     const s = this.status, l = s?.list || {};
     const healthy = this.reachable && (l.channels ?? 0) > 0;
@@ -487,6 +511,11 @@ class BifrostApp extends LitElement {
           ${this.access?.admin ? html`<button class="share" @click=${() => this.renderRoot.querySelector("share-dialog").open()}>Share…</button>` : nothing}
           <span class="chip">${s?.version ?? "…"}</span>
           <span class="pill"><span class="dot ${healthy ? "ok" : "bad"}"></span>${!this.reachable ? "Not answering" : healthy ? "Healthy" : s ? "No list yet" : "Loading"}</span>
+          ${this.access?.me ? html`<button class="me" popovertarget="me-menu" aria-label="Account: ${this.access.me}">${avatar(this.access.me)}</button>
+            <div class="menu" id="me-menu" popover @toggle=${(e) => this.placeMenu(e)}>
+              <div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div>
+              <a href="/cdn-cgi/access/logout">Sign out</a>
+            </div>` : nothing}
         </div>
       </header>
       <div class="band" aria-hidden="true"></div>
@@ -501,7 +530,7 @@ class BifrostApp extends LitElement {
         ? html`<activity-view .status=${s}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}" @access=${(e) => { this.access = e.detail; }}></share-dialog>
-      <p class="note">${this.access?.me ? `Signed in as ${this.access.me}. ` : ""}Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
+      <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
     </div>`;
   }
 }
