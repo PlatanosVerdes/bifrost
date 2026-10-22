@@ -306,6 +306,7 @@ func TestAccessMembers(t *testing.T) {
 		{"another site", "POST", "boss", "application/json", "https://evil.example", `{"group":"g-own","emails":["bob@example.com"]}`, 403, "another site", []string{"ana@example.com"}, 0},
 		{"remove", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"ANA@example.com"}`, 200, "", []string{}, 1},
 		{"remove someone not on it", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"zoe@example.com"}`, 200, "", []string{"ana@example.com"}, 0},
+		{"remove yourself", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"BOSS@example.com"}`, 409, "remove yourself", []string{"ana@example.com"}, 0},
 		{"remove from a group another app uses", "DELETE", "boss", "application/json", own, `{"group":"g-family","email":"dad@example.com"}`, 404, "That list cannot be edited from bifrost", []string{"ana@example.com"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {

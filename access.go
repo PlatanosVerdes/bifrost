@@ -189,6 +189,10 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if email[0] == strings.ToLower(v.email) {
+			writeError(w, http.StatusConflict, "You cannot remove yourself: ask another admin")
+			return
+		}
 		err = a.provider.remove(r.Context(), v, body.Group, email[0])
 	}
 	if err != nil {
