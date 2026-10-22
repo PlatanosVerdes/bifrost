@@ -65,6 +65,9 @@ func main() {
 	})
 	mux.HandleFunc("/api/status", h.serveStatus)
 	mux.HandleFunc("/api/channels", h.serveChannels)
+	acc := newAccess(cfg)
+	mux.HandleFunc("/api/access", acc.serve)
+	mux.HandleFunc("/api/access/members", acc.serveMembers)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if isPage(r.URL.Path) {
 			servePage(w, r)
