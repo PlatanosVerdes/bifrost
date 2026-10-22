@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -52,6 +53,29 @@ type access struct {
 	provider accessProvider // nil: sharing is off
 	admins   map[string]bool
 	invites  *inviteLog
+	rejected quietLog
+}
+
+// quietLog prints at most one line a minute: whoever can reach bifrost can send it bad tokens.
+type quietLog struct {
+	mu      sync.Mutex
+	last    time.Time
+	skipped int
+}
+
+func (q *quietLog) printf(format string, args ...any) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if time.Since(q.last) < time.Minute {
+		q.skipped++
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	if q.skipped > 0 {
+		msg += fmt.Sprintf(" (and %d more since the last line)", q.skipped)
+	}
+	log.Print(msg)
+	q.last, q.skipped = time.Now(), 0
 }
 
 func newAccess(cfg config) *access {
@@ -75,7 +99,7 @@ func (a *access) who(r *http.Request) (viewer, bool) {
 	v, err := a.provider.viewer(r)
 	if err != nil {
 		if !errors.Is(err, errNoToken) {
-			log.Printf("[access] rejected a token: %v", err)
+			a.rejected.printf("[access] rejected a token: %v", err)
 		}
 		return viewer{}, false
 	}
