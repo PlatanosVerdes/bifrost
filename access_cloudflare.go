@@ -208,7 +208,7 @@ type cfSnapshot struct {
 	link    string
 	origins []string
 	groups  []string        // ids in this app's include rules, in policy order
-	shared  map[string]bool // also referenced by another app
+	shared  map[string]bool // also referenced by another app, or nested in a group
 	at      time.Time
 }
 
@@ -221,10 +221,18 @@ type cfApp struct {
 }
 
 type cfPolicy struct {
-	ID      string            `json:"id"`
+	ID string `json:"id"`
+	cfRules
+}
+
+type cfRules struct {
 	Include []json.RawMessage `json:"include"`
 	Exclude []json.RawMessage `json:"exclude"`
 	Require []json.RawMessage `json:"require"`
+}
+
+func (r cfRules) groups() []string {
+	return append(append(ruleGroups(r.Include), ruleGroups(r.Exclude)...), ruleGroups(r.Require)...)
 }
 
 type cfRule struct {
@@ -269,6 +277,13 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	if err := c.list(ctx, "/access/policies", &reusable); err != nil {
 		return cfSnapshot{}, err
 	}
+	var groups []struct {
+		ID string `json:"id"`
+		cfRules
+	}
+	if err := c.list(ctx, "/access/groups", &groups); err != nil {
+		return cfSnapshot{}, err
+	}
 	byID := map[string]cfPolicy{}
 	for _, p := range reusable {
 		byID[p.ID] = p
@@ -288,7 +303,7 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	for i, app := range apps {
 		for _, p := range app.Policies {
 			p = rules(p)
-			for _, g := range append(append(ruleGroups(p.Include), ruleGroups(p.Exclude)...), ruleGroups(p.Require)...) {
+			for _, g := range p.groups() {
 				if appsOf[g] == nil {
 					appsOf[g] = map[string]bool{}
 				}
@@ -322,6 +337,14 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 		for id := range users {
 			if id != mine.ID {
 				s.shared[g] = true
+			}
+		}
+	}
+	// Members of a nested group also get whatever the outer group is used for.
+	for _, g := range groups {
+		for _, id := range g.groups() {
+			if id != g.ID {
+				s.shared[id] = true
 			}
 		}
 	}
