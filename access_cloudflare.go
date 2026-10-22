@@ -39,10 +39,11 @@ type cloudflareAccess struct {
 	api     string
 	client  *http.Client
 
-	keysMu   sync.Mutex
-	keys     map[string]*rsa.PublicKey
-	keysAt   time.Time
-	certsURL string
+	keysMu    sync.Mutex
+	keys      map[string]*rsa.PublicKey
+	keysAt    time.Time
+	keysFetch chan struct{} // closed when the fetch in flight ends; nil when none is
+	certsURL  string
 
 	mu   sync.Mutex
 	snap cfSnapshot
@@ -148,21 +149,36 @@ func decodeSegment(seg string, v any) error {
 }
 
 // key returns the team's signing key by kid, fetching the keys again when Cloudflare has rotated them.
+// The fetch runs outside the lock: any caller can ask for an unknown kid, and known ones must not wait.
 func (c *cloudflareAccess) key(kid string) (*rsa.PublicKey, error) {
 	c.keysMu.Lock()
-	defer c.keysMu.Unlock()
 	if k, ok := c.keys[kid]; ok {
+		c.keysMu.Unlock()
 		return k, nil
 	}
-	if time.Since(c.keysAt) < cfKeysMinFetch {
-		return nil, fmt.Errorf("unknown key %q", kid)
+	if wait := c.keysFetch; wait != nil {
+		c.keysMu.Unlock()
+		<-wait
+		c.keysMu.Lock()
+	} else if time.Since(c.keysAt) >= cfKeysMinFetch {
+		c.keysAt = time.Now()
+		done := make(chan struct{})
+		c.keysFetch = done
+		c.keysMu.Unlock()
+		keys, err := c.fetchKeys()
+		c.keysMu.Lock()
+		c.keysFetch = nil
+		close(done)
+		if err == nil && len(keys) == 0 {
+			err = errors.New("no usable key in the answer")
+		}
+		if err != nil {
+			c.keysMu.Unlock()
+			return nil, fmt.Errorf("team keys: %w", err)
+		}
+		c.keys = keys
 	}
-	c.keysAt = time.Now()
-	keys, err := c.fetchKeys()
-	if err != nil {
-		return nil, fmt.Errorf("team keys: %w", err)
-	}
-	c.keys = keys
+	defer c.keysMu.Unlock()
 	if k, ok := c.keys[kid]; ok {
 		return k, nil
 	}

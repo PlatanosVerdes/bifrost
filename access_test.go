@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"crypto"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"math/big"
 	"net/http"
@@ -19,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -562,5 +565,65 @@ func TestAccessOffersOnlyAllowLists(t *testing.T) {
 	}
 	if len(f.puts) != 0 {
 		t.Fatalf("%d PUTs", len(f.puts))
+	}
+}
+
+// Anyone can send a token with an unknown kid: the fetch it causes must not hold up known keys,
+// and an empty answer must not throw away the keys bifrost has.
+func TestAccessKeyFetch(t *testing.T) {
+	f := newFakeCloudflare(t)
+	var fetches atomic.Int32
+	answer := make(chan string, 1)
+	inner := f.srv.Config.Handler
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cdn-cgi/access/certs" && fetches.Add(1) > 1 {
+			w.Write([]byte(<-answer))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	c := f.provider()
+	good := f.token("boss@example.com")
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	junk := b64([]byte(`{"alg":"RS256","kid":"nope"}`)) + ".e30.AAAA"
+	c.keysAt = time.Now().Add(-time.Minute)
+	done := make(chan error)
+	go func() {
+		_, err := c.verify(junk, time.Now())
+		done <- err
+	}()
+	for fetches.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatalf("a known key failed while a fetch was in flight: %v", err)
+	}
+	answer <- `{"keys":[]}`
+	if err := <-done; err == nil {
+		t.Fatal("junk accepted")
+	}
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatalf("an empty answer threw the keys away: %v", err)
+	}
+}
+
+func TestAccessRejectionsLogQuietly(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	for range 5 {
+		get(t, a, "a.b")
+	}
+	if n := strings.Count(buf.String(), "rejected a token"); n != 1 {
+		t.Fatalf("%d lines for 5 bad tokens:\n%s", n, buf.String())
+	}
+	a.rejected.last = time.Now().Add(-time.Hour)
+	get(t, a, "a.b")
+	if !strings.Contains(buf.String(), "(and 4 more since the last line)") {
+		t.Fatalf("no count of the skipped lines:\n%s", buf.String())
 	}
 }
