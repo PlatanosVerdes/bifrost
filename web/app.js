@@ -318,10 +318,110 @@ class ActivityView extends LitElement {
 }
 customElements.define("activity-view", ActivityView);
 
+// --- sharing: who may open this page, kept by the access provider in front of bifrost -------------
+
+class ShareDialog extends LitElement {
+  static properties = { access: { attribute: false }, heading: {}, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true } };
+  static styles = [base, css`
+    dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 22px;
+      background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
+    dialog::backdrop { background: rgba(0, 0, 0, .45); }
+    h3 { margin: 0 32px 8px 0; font-family: var(--font-display); font-weight: 500; font-size: 20px; }
+    .close { position: absolute; top: 14px; right: 14px; }
+    p.lead { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+    .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+    .tabs button { background: none; border: 0; padding: 8px 0; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+    form, .copy { display: flex; gap: 8px; }
+    input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+    input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn { font: inherit; font-size: 14px; font-weight: 600; border-radius: 8px; padding: 9px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--ink); white-space: nowrap; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+    .err { font-size: 13px; color: var(--calm-bad); margin: 8px 0 0; }
+    h4 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 20px 0 8px; }
+    ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+    li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+    li:first-child { border-top: 0; }
+    .avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 12px; font-weight: 700;
+      background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); text-transform: uppercase; }
+    .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .who small { display: block; color: var(--muted); font-size: 12px; }
+    .remove { font-size: 12px; padding: 5px 10px; }
+  `];
+
+  constructor() { super(); this.tab = "email"; this.error = ""; this.busy = false; this.copied = false; }
+
+  open() { this.error = ""; this.renderRoot.querySelector("dialog").showModal(); }
+
+  async change(method, body) {
+    this.busy = true; this.error = "";
+    try {
+      const r = await fetch("api/access/members", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      this.dispatchEvent(new CustomEvent("access", { detail: data }));
+      return true;
+    } catch (e) {
+      this.error = e.message;
+      return false;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async invite(e, group) {
+    e.preventDefault();
+    const input = e.target.querySelector("input");
+    const emails = input.value.split(",").map((x) => x.trim()).filter(Boolean);
+    if (emails.length && await this.change("POST", { group: group.id, emails })) input.value = "";
+  }
+
+  copy() {
+    navigator.clipboard.writeText(this.access.link);
+    this.copied = true;
+    setTimeout(() => { this.copied = false; }, 1500);
+  }
+
+  members(group) {
+    if (!group.members.length) return html`<li class="muted">Nobody yet.</li>`;
+    return group.members.map((m) => html`<li><span class="avatar" aria-hidden="true">${m[0]}</span>
+      <span class="who">${m}${m === this.access.me ? html`<small>you</small>` : nothing}</span>
+      ${group.editable && m !== this.access.me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
+  }
+
+  render() {
+    const a = this.access;
+    if (!a?.admin) return nothing;
+    const editable = a.groups.find((g) => g.editable);
+    const tab = (id, label) => html`<button role="tab" aria-selected=${this.tab === id} @click=${() => { this.tab = id; }}>${label}</button>`;
+    return html`<dialog aria-labelledby="share-title">
+      <button class="btn close" aria-label="Close" @click=${() => this.renderRoot.querySelector("dialog").close()}>✕</button>
+      <h3 id="share-title">Share ${this.heading}</h3>
+      <p class="lead">People on this list can open this page after signing in with Google or a code sent to their email. They see the page only: streams never leave the house.</p>
+      <div class="tabs" role="tablist">${tab("email", "Invite by email")}${tab("link", "Copy link")}</div>
+      ${this.tab === "email"
+        ? editable
+          ? html`<form @submit=${(e) => this.invite(e, editable)}>
+              <input type="text" inputmode="email" autocomplete="off" autofocus placeholder="user@example.com" aria-label="Email addresses">
+              <button class="btn primary" ?disabled=${this.busy}>Share</button></form>
+            <p class="hint">Separate several addresses with commas.</p>`
+          : html`<p class="hint">No list here can be edited from bifrost: each one is also used by another app.</p>`
+        : html`<div class="copy"><input readonly .value=${a.link} aria-label="Link to this page" @focus=${(e) => e.target.select()}>
+            <button class="btn primary" @click=${() => this.copy()}>${this.copied ? "Copied" : "Copy"}</button></div>
+          <p class="hint">Send it by any chat. It only opens for people on the list.</p>`}
+      ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
+      ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
+    </dialog>`;
+  }
+}
+customElements.define("share-dialog", ShareDialog);
+
 // --- the page: header, tabs, fetching ---------------------------------------------------------
 
 class BifrostApp extends LitElement {
-  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true } };
+  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true } };
   static styles = [base, css`
     .wrap { max-width: 1080px; margin: 0 auto; padding-block: 22px 48px;
       padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -340,11 +440,13 @@ class BifrostApp extends LitElement {
     .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
     .summary b { color: var(--ink); font-family: var(--font-data); font-weight: 500; }
     .note { color: var(--muted); font-size: 12px; margin-top: 28px; max-width: 72ch; }
+    .share { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+    .share:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
 
   constructor() {
     super();
-    this.status = null; this.channels = []; this.reachable = true;
+    this.status = null; this.channels = []; this.reachable = true; this.access = null;
     this.view = location.hash === "#activity" ? "activity" : "channels";
   }
 
@@ -353,6 +455,7 @@ class BifrostApp extends LitElement {
     this.onHash = () => { this.view = location.hash === "#activity" ? "activity" : "channels"; };
     window.addEventListener("hashchange", this.onHash);
     this.refresh();
+    fetch("api/access").then((r) => r.ok ? r.json() : null).then((a) => { this.access = a; }).catch(() => {});
     this.timer = setInterval(() => this.refresh(), REFRESH_MS);
   }
 
@@ -381,6 +484,7 @@ class BifrostApp extends LitElement {
       <header>
         <div class="brand"><p class="word">bifrost</p><span class="muted">${s?.name ?? ""} · ${location.host}</span></div>
         <div class="right">
+          ${this.access?.admin ? html`<button class="share" @click=${() => this.renderRoot.querySelector("share-dialog").open()}>Share…</button>` : nothing}
           <span class="chip">${s?.version ?? "…"}</span>
           <span class="pill"><span class="dot ${healthy ? "ok" : "bad"}"></span>${!this.reachable ? "Not answering" : healthy ? "Healthy" : s ? "No list yet" : "Loading"}</span>
         </div>
@@ -396,7 +500,8 @@ class BifrostApp extends LitElement {
       ${this.view === "activity"
         ? html`<activity-view .status=${s}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []}></channel-board>`}
-      <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
+      <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}" @access=${(e) => { this.access = e.detail; }}></share-dialog>
+      <p class="note">${this.access?.me ? `Signed in as ${this.access.me}. ` : ""}Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
     </div>`;
   }
 }
