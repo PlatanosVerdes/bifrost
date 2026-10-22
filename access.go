@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Who may open the page is kept by the access provider; bifrost only edits lists no other app uses.
@@ -18,7 +19,8 @@ type accessProvider interface {
 	// An error means nobody: the identity counts only when the provider's signature proves it.
 	viewer(r *http.Request) (viewer, error)
 	site(ctx context.Context, v viewer) (site, error)
-	add(ctx context.Context, v viewer, list string, emails []string) error
+	// add returns the emails that were not on the list yet.
+	add(ctx context.Context, v viewer, list string, emails []string) ([]string, error)
 	remove(ctx context.Context, v viewer, list, email string) error
 }
 
@@ -49,10 +51,11 @@ var errNoToken = errors.New("no token from the access provider")
 type access struct {
 	provider accessProvider // nil: sharing is off
 	admins   map[string]bool
+	invites  *inviteLog
 }
 
 func newAccess(cfg config) *access {
-	a := &access{admins: map[string]bool{}}
+	a := &access{admins: map[string]bool{}, invites: loadInvites(cfg.stateDir)}
 	for _, e := range strings.Split(cfg.admins, ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
 			a.admins[e] = true
@@ -98,7 +101,7 @@ func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
-	writeJSON(w, adminPayload(v, s))
+	writeJSON(w, a.adminPayload(v, s))
 }
 
 func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +155,10 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "Give at least one email address")
 			return
 		}
-		err = a.provider.add(r.Context(), v, body.Group, emails)
+		var added []string
+		if added, err = a.provider.add(r.Context(), v, body.Group, emails); err == nil {
+			a.invites.record(added, strings.ToLower(v.email), time.Now())
+		}
 	} else {
 		var email []string
 		if email, err = cleanEmails([]string{body.Email}); err != nil {
@@ -169,11 +175,12 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
-	writeJSON(w, adminPayload(v, s))
+	a.invites.keep(s.lists)
+	writeJSON(w, a.adminPayload(v, s))
 }
 
-func adminPayload(v viewer, s site) map[string]any {
-	return map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists}
+func (a *access) adminPayload(v viewer, s site) map[string]any {
+	return map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists, "invites": a.invites.of(s.lists)}
 }
 
 // One bad address rejects the whole batch, so a typo never half-invites.
