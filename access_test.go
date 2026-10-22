@@ -67,6 +67,7 @@ type fakeCloudflare struct {
 	groups map[string]map[string]any
 	puts   []map[string]any
 	onPut  func() // runs before a PUT is stored, without the lock
+	calls  atomic.Int32
 }
 
 func newFakeCloudflare(t *testing.T) *fakeCloudflare {
@@ -146,6 +147,9 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 		ok(w, stored, 0)
 	})
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/client/v4/") {
+			f.calls.Add(1)
+		}
 		if strings.HasPrefix(r.URL.Path, "/client/v4/") && r.Header.Get("Authorization") != "Bearer secret-token" {
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []any{map[string]string{"message": "bad token"}}})
@@ -237,7 +241,7 @@ type accessReply struct {
 }
 
 func get(t *testing.T, a *access, token string) (int, accessReply, string) {
-	r := httptest.NewRequest("GET", "/api/access", nil)
+	r := httptest.NewRequest("GET", "/api/access?lists=1", nil)
 	if token != "" {
 		r.Header.Set("Cf-Access-Jwt-Assertion", token)
 	}
@@ -660,5 +664,22 @@ func TestAccessEditChecksUnderTheLock(t *testing.T) {
 	}
 	if w := <-second; w.Code != http.StatusNotFound || len(f.puts) != 1 {
 		t.Fatalf("second edit: %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
+	}
+}
+
+func TestAccessIdentityNeedsNoAPICall(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	r := httptest.NewRequest("GET", "/api/access", nil)
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	w := httptest.NewRecorder()
+	a.serve(w, r)
+	var got accessReply
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if w.Code != 200 || !got.Admin || got.Groups != nil || got.Link != "" {
+		t.Fatalf("identity: %d %s", w.Code, w.Body)
+	}
+	if n := f.calls.Load(); n != 0 {
+		t.Fatalf("answering who is looking cost %d Cloudflare calls", n)
 	}
 }

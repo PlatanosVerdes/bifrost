@@ -332,7 +332,7 @@ customElements.define("activity-view", ActivityView);
 // --- sharing: who may open this page, kept by the access provider in front of bifrost -------------
 
 class ShareDialog extends LitElement {
-  static properties = { access: { attribute: false }, heading: {}, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true } };
+  static properties = { access: { attribute: false }, heading: {}, data: { state: true }, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true } };
   static styles = [base, css`
     dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 22px;
       background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
@@ -361,9 +361,22 @@ class ShareDialog extends LitElement {
     .remove { font-size: 12px; padding: 5px 10px; }
   `];
 
-  constructor() { super(); this.tab = "email"; this.error = ""; this.busy = false; this.copied = false; }
+  constructor() { super(); this.data = null; this.tab = "email"; this.error = ""; this.busy = false; this.copied = false; }
 
-  open() { this.error = ""; this.renderRoot.querySelector("dialog").showModal(); }
+  async open() {
+    this.error = ""; this.data = null;
+    this.renderRoot.querySelector("dialog").showModal();
+    try {
+      const r = await fetch("api/access?lists=1");
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      this.data = data;
+      await this.updateComplete;
+      this.renderRoot.querySelector("form input")?.focus();
+    } catch (e) {
+      this.error = e.message;
+    }
+  }
 
   async change(method, body) {
     this.busy = true; this.error = "";
@@ -371,7 +384,7 @@ class ShareDialog extends LitElement {
       const r = await fetch("api/access/members", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      this.dispatchEvent(new CustomEvent("access", { detail: data }));
+      this.data = data;
       return true;
     } catch (e) {
       this.error = e.message;
@@ -389,13 +402,13 @@ class ShareDialog extends LitElement {
   }
 
   copy() {
-    navigator.clipboard.writeText(this.access.link);
+    navigator.clipboard.writeText(this.data.link);
     this.copied = true;
     setTimeout(() => { this.copied = false; }, 1500);
   }
 
   invited(email) {
-    const i = this.access.invites?.[email];
+    const i = this.data.invites?.[email];
     if (!i) return nothing;
     const by = i.by === this.access.me?.toLowerCase() ? "you" : i.by;
     return html`<small>invited by ${by} · ${new Date(i.at).toLocaleDateString([], { day: "numeric", month: "short" })}</small>`;
@@ -410,14 +423,14 @@ class ShareDialog extends LitElement {
   }
 
   render() {
-    const a = this.access;
-    if (!a?.admin) return nothing;
-    const editable = a.groups.find((g) => g.editable);
+    if (!this.access?.admin) return nothing;
+    const a = this.data, editable = a?.groups.find((g) => g.editable);
     const tab = (id, label) => html`<button role="tab" aria-selected=${this.tab === id} @click=${() => { this.tab = id; }}>${label}</button>`;
     return html`<dialog aria-labelledby="share-title">
       <button class="btn close" aria-label="Close" @click=${() => this.renderRoot.querySelector("dialog").close()}>✕</button>
       <h3 id="share-title">Share ${this.heading}</h3>
       <p class="lead">People on this list can open this page after signing in with Google or a code sent to their email. They see the page only: streams never leave the house.</p>
+      ${!a ? html`${this.error ? nothing : html`<p class="hint">Loading who has access…</p>`}` : html`
       <div class="tabs" role="tablist">${tab("email", "Invite by email")}${tab("link", "Copy link")}</div>
       ${this.tab === "email"
         ? editable
@@ -429,9 +442,9 @@ class ShareDialog extends LitElement {
         : html`<div class="copy"><input readonly .value=${a.link} aria-label="Link to this page" @focus=${(e) => e.target.select()}>
             <button class="btn primary" @click=${() => this.copy()}>${this.copied ? "Copied" : "Copy"}</button></div>
           <p class="hint">Send it by any chat. It only opens for people on the list.</p>`}
-      ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
       ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
-      ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}
+      ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}`}
+      ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
     </dialog>`;
   }
 }
@@ -459,8 +472,6 @@ class BifrostApp extends LitElement {
     .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
     .summary b { color: var(--ink); font-family: var(--font-data); font-weight: 500; }
     .note { color: var(--muted); font-size: 12px; margin-top: 28px; max-width: 72ch; }
-    .share { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
-    .share:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .me { background: none; border: 0; padding: 0; border-radius: 50%; cursor: pointer; display: flex; }
     .me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); image-rendering: pixelated; }
@@ -468,9 +479,10 @@ class BifrostApp extends LitElement {
       padding: 14px; min-width: 220px; max-width: min(300px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
     .menu .who { display: flex; align-items: center; gap: 10px; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
     .menu .avatar { width: 40px; height: 40px; }
-    .menu a { display: block; text-align: center; font-size: 13px; font-weight: 600; color: var(--ink); text-decoration: none;
-      border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; background: var(--chip); }
-    .menu a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .menu .item { display: block; width: 100%; box-sizing: border-box; text-align: center; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink);
+      text-decoration: none; border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; background: var(--chip); cursor: pointer; }
+    .menu .item + .item { margin-top: 8px; }
+    .menu .item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
 
   constructor() {
@@ -511,6 +523,11 @@ class BifrostApp extends LitElement {
     Object.assign(e.target.style, { top: `${b.bottom + 8}px`, right: `${Math.max(16, innerWidth - b.right)}px` });
   }
 
+  share() {
+    this.renderRoot.querySelector("#me-menu").hidePopover();
+    this.renderRoot.querySelector("share-dialog").open();
+  }
+
   render() {
     const s = this.status, l = s?.list || {};
     const healthy = this.reachable && (l.channels ?? 0) > 0;
@@ -520,13 +537,14 @@ class BifrostApp extends LitElement {
       <header>
         <div class="brand"><p class="word">bifrost</p><span class="muted">${s?.name ?? ""} · ${location.host}</span></div>
         <div class="right">
-          ${this.access?.admin ? html`<button class="share" @click=${() => this.renderRoot.querySelector("share-dialog").open()}>Share…</button>` : nothing}
           <span class="chip">${s?.version ?? "…"}</span>
           <span class="pill"><span class="dot ${healthy ? "ok" : "bad"}"></span>${!this.reachable ? "Not answering" : healthy ? "Healthy" : s ? "No list yet" : "Loading"}</span>
           ${this.access?.enabled ? html`<button class="me" popovertarget="me-menu" aria-label=${this.access.me ? `Account: ${this.access.me}` : "Not signed in"}>${avatar(this.access.me)}</button>
             <div class="menu" id="me-menu" popover @toggle=${(e) => this.placeMenu(e)}>
               ${this.access.me
-                ? html`<div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div><a href="/cdn-cgi/access/logout">Sign out</a>`
+                ? html`<div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div>
+                  ${this.access.admin ? html`<button class="item" @click=${() => this.share()}>Share…</button>` : nothing}
+                  <a class="item" href="/cdn-cgi/access/logout">Sign out</a>`
                 : html`<div class="who">${avatar("")}<span>Not signed in. Open this page through its public address to sign in.</span></div>`}
             </div>` : nothing}
         </div>
@@ -542,7 +560,7 @@ class BifrostApp extends LitElement {
       ${this.view === "activity"
         ? html`<activity-view .status=${s}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []}></channel-board>`}
-      <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}" @access=${(e) => { this.access = e.detail; }}></share-dialog>
+      <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
       <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
     </div>`;
   }
