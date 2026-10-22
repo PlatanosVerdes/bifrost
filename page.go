@@ -32,7 +32,6 @@ func servePage(w http.ResponseWriter, r *http.Request) {
 	webFiles.ServeHTTP(w, r)
 }
 
-// guarded keeps the page and its API out of other sites' frames, and their types as declared.
 func guarded(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
