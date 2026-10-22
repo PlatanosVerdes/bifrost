@@ -55,27 +55,31 @@ func main() {
 		}
 	}()
 
+	log.Printf("bifrost %s: %s -> %s, playlist %s", buildVersion, cfg.listenAddr, cfg.aceserveBaseURL, cfg.outputFile)
+	// No WriteTimeout: a stream answer lasts as long as the broadcast.
+	srv := &http.Server{Addr: cfg.listenAddr, Handler: routes(h, newAccess(cfg)), ReadHeaderTimeout: 10 * time.Second}
+	log.Fatal(srv.ListenAndServe())
+}
+
+func routes(h *hub, acc *access) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if cat.count() == 0 {
+		if h.table.count() == 0 {
 			http.Error(w, "no channel list yet", http.StatusServiceUnavailable)
 			return
 		}
 		w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/api/status", h.serveStatus)
-	mux.HandleFunc("/api/channels", h.serveChannels)
-	acc := newAccess(cfg)
-	mux.HandleFunc("/api/access", acc.serve)
-	mux.HandleFunc("/api/access/members", acc.serveMembers)
+	mux.HandleFunc("/api/status", guarded(h.serveStatus))
+	mux.HandleFunc("/api/channels", guarded(h.serveChannels))
+	mux.HandleFunc("/api/access", guarded(acc.serve))
+	mux.HandleFunc("/api/access/members", guarded(acc.serveMembers))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if isPage(r.URL.Path) {
-			servePage(w, r)
+			guarded(servePage)(w, r)
 			return
 		}
 		h.serve(w, r)
 	})
-
-	log.Printf("bifrost %s: %s -> %s, playlist %s", buildVersion, cfg.listenAddr, cfg.aceserveBaseURL, cfg.outputFile)
-	log.Fatal(http.ListenAndServe(cfg.listenAddr, mux))
+	return mux
 }

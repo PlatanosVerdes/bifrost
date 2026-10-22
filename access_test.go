@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"crypto"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"math/big"
 	"net/http"
@@ -16,8 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -62,6 +66,7 @@ type fakeCloudflare struct {
 	pols   []map[string]any
 	groups map[string]map[string]any
 	puts   []map[string]any
+	onPut  func() // runs before a PUT is stored, without the lock
 }
 
 func newFakeCloudflare(t *testing.T) *fakeCloudflare {
@@ -71,16 +76,16 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 			{{
 				"id": "app-tv", "domain": "tv.example.com", "aud": "aud-tv", "self_hosted_domains": []string{"tv.example.com", "tv.example.net/path"},
 				"policies": []any{
-					map[string]any{"id": "p-legacy", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}},
-					map[string]any{"id": "p-family", "reusable": true},
+					map[string]any{"id": "p-legacy", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}},
+					map[string]any{"id": "p-family", "decision": "allow", "reusable": true},
 				},
 			}},
 			{{
 				"id": "app-photos", "domain": "photos.example.com", "aud": "aud-photos",
-				"policies": []any{map[string]any{"id": "p-family", "reusable": true, "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
+				"policies": []any{map[string]any{"id": "p-family", "decision": "allow", "reusable": true, "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
 			}},
 		},
-		pols: []map[string]any{{"id": "p-family", "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
+		pols: []map[string]any{{"id": "p-family", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-family"}}}}},
 		groups: map[string]map[string]any{
 			"g-own": {"id": "g-own", "name": "TV viewers", "is_default": false, "include": []any{
 				map[string]any{"email": map[string]any{"email": "Ana@example.com"}},
@@ -101,6 +106,8 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 	mux.HandleFunc("GET "+api+"/apps", func(w http.ResponseWriter, r *http.Request) {
 		var page int
 		fmt.Sscan(r.URL.Query().Get("page"), &page)
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if page < 1 || page > len(f.apps) {
 			ok(w, []any{}, len(f.apps))
 			return
@@ -108,6 +115,11 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 		ok(w, f.apps[page-1], len(f.apps))
 	})
 	mux.HandleFunc("GET "+api+"/policies", func(w http.ResponseWriter, r *http.Request) { ok(w, f.pols, 1) })
+	mux.HandleFunc("GET "+api+"/groups", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		ok(w, slices.Collect(maps.Values(f.groups)), 1)
+	})
 	mux.HandleFunc("GET "+api+"/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -122,6 +134,9 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 	mux.HandleFunc("PUT "+api+"/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var g map[string]any
 		json.NewDecoder(r.Body).Decode(&g)
+		if f.onPut != nil {
+			f.onPut()
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.puts = append(f.puts, g)
@@ -291,6 +306,7 @@ func TestAccessMembers(t *testing.T) {
 		{"another site", "POST", "boss", "application/json", "https://evil.example", `{"group":"g-own","emails":["bob@example.com"]}`, 403, "another site", []string{"ana@example.com"}, 0},
 		{"remove", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"ANA@example.com"}`, 200, "", []string{}, 1},
 		{"remove someone not on it", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"zoe@example.com"}`, 200, "", []string{"ana@example.com"}, 0},
+		{"remove yourself", "DELETE", "boss", "application/json", own, `{"group":"g-own","email":"BOSS@example.com"}`, 409, "remove yourself", []string{"ana@example.com"}, 0},
 		{"remove from a group another app uses", "DELETE", "boss", "application/json", own, `{"group":"g-family","email":"dad@example.com"}`, 404, "That list cannot be edited from bifrost", []string{"ana@example.com"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -482,5 +498,167 @@ func TestInviteLogKeepsWhoIsStillOnAList(t *testing.T) {
 	}
 	if _, ok := got["gone@example.com"]; ok {
 		t.Fatal("gone@ is on no list any more and should have been dropped")
+	}
+}
+
+// Nested in a group another app uses, so an invite would also open that app.
+func TestAccessNestedGroupIsShared(t *testing.T) {
+	f := newFakeCloudflare(t)
+	f.apps[1][0]["policies"] = []any{map[string]any{"id": "p-photos", "include": []any{map[string]any{"group": map[string]any{"id": "g-parent"}}}}}
+	f.groups["g-parent"] = map[string]any{"id": "g-parent", "name": "Photos users", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}}
+	a := f.access("boss@example.com")
+	if w := change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`); w.Code != http.StatusNotFound || len(f.puts) != 0 {
+		t.Fatalf("got %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
+	}
+	if _, got, raw := get(t, a, f.token("boss@example.com")); got.Groups[0].ID != "g-own" || got.Groups[0].Editable {
+		t.Fatalf("g-own offered as editable: %s", raw)
+	}
+}
+
+func change(t *testing.T, f *fakeCloudflare, a *access, method, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, "/api/access/members", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "https://tv.example.com")
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	w := httptest.NewRecorder()
+	a.serveMembers(w, r)
+	return w
+}
+
+// A rule bifrost cannot read could name any group, so then no group is bifrost's alone.
+func TestAccessFailsClosedOnRulesItCannotRead(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		policy map[string]any
+	}{
+		{"a policy missing from the reusable listing", map[string]any{"id": "p-unlisted"}},
+		{"a group rule of another shape", map[string]any{"id": "p-odd", "include": []any{map[string]any{"group": "g-own"}}}},
+		{"a group rule without an id", map[string]any{"id": "p-odd", "include": []any{map[string]any{"group": map[string]any{}}}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeCloudflare(t)
+			f.apps[1][0]["policies"] = []any{c.policy}
+			a := f.access("boss@example.com")
+			if w := change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`); w.Code != http.StatusNotFound || len(f.puts) != 0 {
+				t.Fatalf("got %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
+			}
+			_, got, raw := get(t, a, f.token("boss@example.com"))
+			for _, g := range got.Groups {
+				if g.Editable {
+					t.Fatalf("%s offered as editable: %s", g.ID, raw)
+				}
+			}
+		})
+	}
+}
+
+// Only an allow policy shares the page: a deny or bypass list is not one to invite people into.
+func TestAccessOffersOnlyAllowLists(t *testing.T) {
+	f := newFakeCloudflare(t)
+	f.apps[0][0]["policies"] = append(f.apps[0][0]["policies"].([]any),
+		map[string]any{"id": "p-deny", "decision": "deny", "include": []any{map[string]any{"group": map[string]any{"id": "g-blocked"}}}},
+		map[string]any{"id": "p-bypass", "decision": "bypass", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}})
+	f.groups["g-blocked"] = map[string]any{"id": "g-blocked", "name": "Blocked", "include": []any{map[string]any{"email": map[string]any{"email": "x@example.com"}}}}
+	a := f.access("boss@example.com")
+	_, got, raw := get(t, a, f.token("boss@example.com"))
+	if len(got.Groups) != 2 || got.Groups[0].ID != "g-own" || got.Groups[0].Editable || got.Groups[1].ID != "g-family" {
+		t.Fatalf("want g-own (not editable, also bypass) and g-family only: %s", raw)
+	}
+	for _, body := range []string{`{"group":"g-blocked","emails":["x2@example.com"]}`, `{"group":"g-own","emails":["x2@example.com"]}`} {
+		if w := change(t, f, a, "POST", body); w.Code != http.StatusNotFound {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if len(f.puts) != 0 {
+		t.Fatalf("%d PUTs", len(f.puts))
+	}
+}
+
+// Anyone can send a token with an unknown kid: the fetch it causes must not hold up known keys,
+// and an empty answer must not throw away the keys bifrost has.
+func TestAccessKeyFetch(t *testing.T) {
+	f := newFakeCloudflare(t)
+	var fetches atomic.Int32
+	answer := make(chan string, 1)
+	inner := f.srv.Config.Handler
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cdn-cgi/access/certs" && fetches.Add(1) > 1 {
+			w.Write([]byte(<-answer))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	c := f.provider()
+	good := f.token("boss@example.com")
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	junk := b64([]byte(`{"alg":"RS256","kid":"nope"}`)) + ".e30.AAAA"
+	c.keysAt = time.Now().Add(-time.Minute)
+	done := make(chan error)
+	go func() {
+		_, err := c.verify(junk, time.Now())
+		done <- err
+	}()
+	for fetches.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatalf("a known key failed while a fetch was in flight: %v", err)
+	}
+	answer <- `{"keys":[]}`
+	if err := <-done; err == nil {
+		t.Fatal("junk accepted")
+	}
+	if _, err := c.verify(good, time.Now()); err != nil {
+		t.Fatalf("an empty answer threw the keys away: %v", err)
+	}
+}
+
+func TestAccessRejectionsLogQuietly(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	for range 5 {
+		get(t, a, "a.b")
+	}
+	if n := strings.Count(buf.String(), "rejected a token"); n != 1 {
+		t.Fatalf("%d lines for 5 bad tokens:\n%s", n, buf.String())
+	}
+	a.rejected.last = time.Now().Add(-time.Hour)
+	get(t, a, "a.b")
+	if !strings.Contains(buf.String(), "(and 4 more since the last line)") {
+		t.Fatalf("no count of the skipped lines:\n%s", buf.String())
+	}
+}
+
+// An edit waiting for another one must check the group again: it may have been attached elsewhere meanwhile.
+func TestAccessEditChecksUnderTheLock(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	putting, release := make(chan struct{}), make(chan struct{})
+	f.onPut = func() {
+		putting <- struct{}{}
+		<-release
+	}
+	first := make(chan int)
+	go func() { first <- change(t, f, a, "POST", `{"group":"g-own","emails":["bob@example.com"]}`).Code }()
+	<-putting
+	f.onPut = nil
+	second := make(chan *httptest.ResponseRecorder)
+	go func() { second <- change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`) }()
+	time.Sleep(50 * time.Millisecond)
+	f.mu.Lock()
+	f.apps[1][0]["policies"] = []any{map[string]any{"id": "p-photos", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}}}
+	f.mu.Unlock()
+	close(release)
+	if code := <-first; code != 200 {
+		t.Fatalf("first edit: %d", code)
+	}
+	if w := <-second; w.Code != http.StatusNotFound || len(f.puts) != 1 {
+		t.Fatalf("second edit: %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
 	}
 }

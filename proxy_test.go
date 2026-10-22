@@ -504,3 +504,37 @@ func TestJellyfinSessionsNameTheUser(t *testing.T) {
 		t.Errorf("who without a user: %q", got)
 	}
 }
+
+// Whoever opens a stream, the engine never sees their sign-in.
+func TestStreamDropsCredentials(t *testing.T) {
+	engine := &fakeEngine{}
+	got := make(chan http.Header, 1)
+	proxy := newTestProxy(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case got <- r.Header.Clone():
+		default:
+		}
+		engine.ServeHTTP(w, r)
+	}), 5*time.Second, 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.URL+"/ace/getstream?id=cc108ae39f92c48f6c946763047bd1c9b7b7d889", nil)
+	req.Header.Set("Cf-Access-Jwt-Assertion", "jwt")
+	req.Header.Set("Cookie", "CF_Authorization=jwt")
+	req.Header.Set("Authorization", "Bearer x")
+	req.Header.Set("User-Agent", "Jellyfin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	h := <-got
+	for _, k := range []string{"Cf-Access-Jwt-Assertion", "Cookie", "Authorization"} {
+		if v := h.Get(k); v != "" {
+			t.Errorf("the engine got %s: %q", k, v)
+		}
+	}
+	if h.Get("User-Agent") != "Jellyfin" {
+		t.Errorf("the engine lost the User-Agent: %v", h)
+	}
+}
