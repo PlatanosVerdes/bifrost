@@ -424,12 +424,13 @@ class ShareDialog extends LitElement {
               <input type="text" inputmode="email" autocomplete="off" autofocus placeholder="user@example.com" aria-label="Email addresses">
               <button class="btn primary" ?disabled=${this.busy}>Share</button></form>
             <p class="hint">Separate several addresses with commas.</p>`
-          : html`<p class="hint">No list here can be edited from bifrost: each one is also used by another app.</p>`
+          : html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`
         : html`<div class="copy"><input readonly .value=${a.link} aria-label="Link to this page" @focus=${(e) => e.target.select()}>
             <button class="btn primary" @click=${() => this.copy()}>${this.copied ? "Copied" : "Copy"}</button></div>
           <p class="hint">Send it by any chat. It only opens for people on the list.</p>`}
       ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
       ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
+      ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}
     </dialog>`;
   }
 }
