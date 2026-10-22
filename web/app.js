@@ -394,10 +394,17 @@ class ShareDialog extends LitElement {
     setTimeout(() => { this.copied = false; }, 1500);
   }
 
+  invited(email) {
+    const i = this.access.invites?.[email];
+    if (!i) return nothing;
+    const by = i.by === this.access.me?.toLowerCase() ? "you" : i.by;
+    return html`<small>invited by ${by} · ${new Date(i.at).toLocaleDateString([], { day: "numeric", month: "short" })}</small>`;
+  }
+
   members(group) {
     if (!group.members.length) return html`<li class="muted">Nobody yet.</li>`;
     return group.members.map((m) => html`<li>${avatar(m)}
-      <span class="who">${m}${m === this.access.me ? html`<small>you</small>` : nothing}</span>
+      <span class="who">${m}${m === this.access.me ? html`<small>you</small>` : this.invited(m)}</span>
       ${group.editable && m !== this.access.me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
   }
 

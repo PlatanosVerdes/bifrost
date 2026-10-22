@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Who may open the page is kept by the access provider; bifrost only edits lists no other app uses.
@@ -49,10 +50,11 @@ var errNoToken = errors.New("no token from the access provider")
 type access struct {
 	provider accessProvider // nil: sharing is off
 	admins   map[string]bool
+	invites  *inviteLog
 }
 
 func newAccess(cfg config) *access {
-	a := &access{admins: map[string]bool{}}
+	a := &access{admins: map[string]bool{}, invites: loadInvites(cfg.stateDir)}
 	for _, e := range strings.Split(cfg.admins, ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
 			a.admins[e] = true
@@ -98,7 +100,7 @@ func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
-	writeJSON(w, adminPayload(v, s))
+	writeJSON(w, a.adminPayload(v, s))
 }
 
 func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
@@ -152,14 +154,18 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "Give at least one email address")
 			return
 		}
-		err = a.provider.add(r.Context(), v, body.Group, emails)
+		if err = a.provider.add(r.Context(), v, body.Group, emails); err == nil {
+			a.invites.record(emails, strings.ToLower(v.email), time.Now())
+		}
 	} else {
 		var email []string
 		if email, err = cleanEmails([]string{body.Email}); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		err = a.provider.remove(r.Context(), v, body.Group, email[0])
+		if err = a.provider.remove(r.Context(), v, body.Group, email[0]); err == nil {
+			a.invites.forget(email[0])
+		}
 	}
 	if err != nil {
 		providerError(w, err)
@@ -169,11 +175,11 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
-	writeJSON(w, adminPayload(v, s))
+	writeJSON(w, a.adminPayload(v, s))
 }
 
-func adminPayload(v viewer, s site) map[string]any {
-	return map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists}
+func (a *access) adminPayload(v viewer, s site) map[string]any {
+	return map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists, "invites": a.invites.of(s.lists)}
 }
 
 // One bad address rejects the whole batch, so a typo never half-invites.

@@ -388,3 +388,46 @@ func TestCloudflareAPIErrorsAreReported(t *testing.T) {
 		t.Fatalf("got %d %q", code, got.Error)
 	}
 }
+
+func TestInviteLog(t *testing.T) {
+	f := newFakeCloudflare(t)
+	dir := t.TempDir()
+	a := newAccess(config{admins: "boss@example.com,deputy@example.com", stateDir: dir})
+	a.provider = f.provider()
+	send := func(method, who, body string) map[string]invite {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/access/members", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Cf-Access-Jwt-Assertion", f.token(who))
+		w := httptest.NewRecorder()
+		a.serveMembers(w, r)
+		var reply struct {
+			Invites map[string]invite `json:"invites"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil {
+			t.Fatalf("%s: %d %s", method, w.Code, w.Body)
+		}
+		return reply.Invites
+	}
+
+	got := send("POST", "boss@example.com", `{"group":"g-own","emails":["bob@example.com"]}`)
+	if got["bob@example.com"].By != "boss@example.com" || got["bob@example.com"].At.IsZero() {
+		t.Fatalf("bob's invite: %+v", got)
+	}
+	if _, ok := got["ana@example.com"]; ok {
+		t.Fatal("ana was added outside bifrost, so nobody invited her here")
+	}
+	got = send("POST", "deputy@example.com", `{"group":"g-own","emails":["BOB@example.com"]}`)
+	if got["bob@example.com"].By != "boss@example.com" {
+		t.Fatalf("inviting again replaced the first invite: %+v", got["bob@example.com"])
+	}
+	if reloaded := loadInvites(dir).byTo["bob@example.com"]; reloaded.By != "boss@example.com" {
+		t.Fatalf("not kept across a restart: %+v", reloaded)
+	}
+	if got = send("DELETE", "boss@example.com", `{"group":"g-own","email":"bob@example.com"}`); len(got) != 0 {
+		t.Fatalf("removed but still listed: %+v", got)
+	}
+	if _, ok := loadInvites(dir).byTo["bob@example.com"]; ok {
+		t.Fatal("removed but still on disk")
+	}
+}

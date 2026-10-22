@@ -57,7 +57,7 @@ bifrost:
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY` | required | To run Refresh Guide |
 | `PUSHGATEWAY_URL` | empty | Where the `acestream_*` metrics go |
 | `OUTPUT_FILE` | `/data/channels_ace.m3u` | Jellyfin's playlist; `guide.xml` is written next to it |
-| `STATE_DIR` | `/state` | Run counters and the cached full guide |
+| `STATE_DIR` | `/state` | Run counters, the cached full guide, and `invites.json` (who invited each viewer, which Cloudflare cannot tell) |
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
 | `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
