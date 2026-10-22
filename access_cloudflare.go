@@ -20,9 +20,7 @@ import (
 	"time"
 )
 
-// Cloudflare Access in front of bifrost. Every request it lets through carries a JWT signed by the
-// team's keys and meant for this instance's app (ACCESS_AUD); that tag finds the app, its link and
-// its lists (Access groups) through the API without knowing any names.
+// The app is found by its AUD tag, never by name, so no naming convention is assumed.
 
 const (
 	cfAPI          = "https://api.cloudflare.com/client/v4"
@@ -205,7 +203,7 @@ func (c *cloudflareAccess) fetchKeys() (map[string]*rsa.PublicKey, error) {
 
 // --- this instance's app and groups: the API ----------------------------------------------------
 
-// cfSnapshot is what discovery found for one app. Group members are not kept: they are read fresh.
+// Group members are not cached: they are read fresh on every request.
 type cfSnapshot struct {
 	link    string
 	origins []string
@@ -254,7 +252,6 @@ func ruleGroups(rules []json.RawMessage) []string {
 	return ids
 }
 
-// snapshot finds this instance's app and which of its groups other apps also use.
 // Edits ask for a fresh one: a group attached to another app a minute ago is no longer ours.
 func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot, error) {
 	c.mu.Lock()

@@ -13,15 +13,10 @@ import (
 	"strings"
 )
 
-// Sharing: who may open the page is kept by the access provider in front of bifrost (Cloudflare
-// Access today), never by bifrost. bifrost only lists the provider's lists of people and edits the
-// ones that belong to this instance alone. It never creates or deletes lists, rules or apps.
-
-// accessProvider is the gate in front of bifrost.
+// Who may open the page is kept by the access provider; bifrost only edits lists no other app uses.
 type accessProvider interface {
-	// viewer is who sent the request, proved by the provider's own signature. An error means nobody.
+	// An error means nobody: the identity counts only when the provider's signature proves it.
 	viewer(r *http.Request) (viewer, error)
-	// site is how to reach this instance and the lists of people that may open it.
 	site(ctx context.Context, v viewer) (site, error)
 	add(ctx context.Context, v viewer, list string, emails []string) error
 	remove(ctx context.Context, v viewer, list, email string) error
@@ -44,7 +39,6 @@ type accessList struct {
 	Members  []string `json:"members"`
 }
 
-// errNotEditable is a list that is not this instance's to change, or not one of its lists at all.
 var errNotEditable = errors.New("That list cannot be edited from bifrost")
 
 var errLastMember = errors.New("A list cannot be left empty: add someone else first")
@@ -85,7 +79,6 @@ func (a *access) who(r *http.Request) (viewer, bool) {
 	return v, v.email != "" && a.admins[strings.ToLower(v.email)]
 }
 
-// serve answers GET /api/access: whether sharing is on, who is looking, and for an admin, the lists.
 func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "Use GET")
@@ -108,7 +101,6 @@ func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, adminPayload(v, s))
 }
 
-// serveMembers answers POST and DELETE /api/access/members: add people to a list, or take one off.
 func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "Use POST or DELETE")
@@ -184,7 +176,7 @@ func adminPayload(v viewer, s site) map[string]any {
 	return map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists}
 }
 
-// cleanEmails lowercases and dedupes the addresses, all or nothing.
+// One bad address rejects the whole batch, so a typo never half-invites.
 func cleanEmails(in []string) ([]string, error) {
 	var out []string
 	for _, e := range in {

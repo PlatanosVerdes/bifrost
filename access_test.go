@@ -157,7 +157,6 @@ func (f *fakeCloudflare) access(admins string) *access {
 
 func (f *fakeCloudflare) token(email string) string { return f.tokenFor(email, "aud-tv") }
 
-// tokenFor is a token the same team issued for the app with the given AUD tag.
 func (f *fakeCloudflare) tokenFor(email, aud string) string {
 	key, _ := testKeys(nil)
 	return signJWT(key, "RS256", "k1", map[string]any{
