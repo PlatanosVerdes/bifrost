@@ -462,6 +462,9 @@ func (c *cloudflareAccess) remove(ctx context.Context, v viewer, id, email strin
 
 // edit rewrites one editable group's include rules, leaving every other field and rule kind as is.
 func (c *cloudflareAccess) edit(ctx context.Context, v viewer, id string, change func([]json.RawMessage) []json.RawMessage) error {
+	c.editMu.Lock()
+	defer c.editMu.Unlock()
+	// Checked under the lock, so a group attached elsewhere while another edit ran is seen.
 	s, err := c.snapshot(ctx, true)
 	if err != nil {
 		return err
@@ -469,8 +472,6 @@ func (c *cloudflareAccess) edit(ctx context.Context, v viewer, id string, change
 	if !slices.Contains(s.groups, id) || s.shared[id] || s.doubt != "" {
 		return errNotEditable
 	}
-	c.editMu.Lock()
-	defer c.editMu.Unlock()
 	g, err := c.group(ctx, id)
 	if err != nil {
 		return err

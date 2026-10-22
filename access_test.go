@@ -66,6 +66,7 @@ type fakeCloudflare struct {
 	pols   []map[string]any
 	groups map[string]map[string]any
 	puts   []map[string]any
+	onPut  func() // runs before a PUT is stored, without the lock
 }
 
 func newFakeCloudflare(t *testing.T) *fakeCloudflare {
@@ -105,6 +106,8 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 	mux.HandleFunc("GET "+api+"/apps", func(w http.ResponseWriter, r *http.Request) {
 		var page int
 		fmt.Sscan(r.URL.Query().Get("page"), &page)
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if page < 1 || page > len(f.apps) {
 			ok(w, []any{}, len(f.apps))
 			return
@@ -131,6 +134,9 @@ func newFakeCloudflare(t *testing.T) *fakeCloudflare {
 	mux.HandleFunc("PUT "+api+"/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var g map[string]any
 		json.NewDecoder(r.Body).Decode(&g)
+		if f.onPut != nil {
+			f.onPut()
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.puts = append(f.puts, g)
@@ -625,5 +631,33 @@ func TestAccessRejectionsLogQuietly(t *testing.T) {
 	get(t, a, "a.b")
 	if !strings.Contains(buf.String(), "(and 4 more since the last line)") {
 		t.Fatalf("no count of the skipped lines:\n%s", buf.String())
+	}
+}
+
+// An edit waiting for another one must check the group again: it may have been attached elsewhere meanwhile.
+func TestAccessEditChecksUnderTheLock(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	putting, release := make(chan struct{}), make(chan struct{})
+	f.onPut = func() {
+		putting <- struct{}{}
+		<-release
+	}
+	first := make(chan int)
+	go func() { first <- change(t, f, a, "POST", `{"group":"g-own","emails":["bob@example.com"]}`).Code }()
+	<-putting
+	f.onPut = nil
+	second := make(chan *httptest.ResponseRecorder)
+	go func() { second <- change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`) }()
+	time.Sleep(50 * time.Millisecond)
+	f.mu.Lock()
+	f.apps[1][0]["policies"] = []any{map[string]any{"id": "p-photos", "decision": "allow", "include": []any{map[string]any{"group": map[string]any{"id": "g-own"}}}}}
+	f.mu.Unlock()
+	close(release)
+	if code := <-first; code != 200 {
+		t.Fatalf("first edit: %d", code)
+	}
+	if w := <-second; w.Code != http.StatusNotFound || len(f.puts) != 1 {
+		t.Fatalf("second edit: %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
 	}
 }
