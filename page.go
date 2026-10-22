@@ -32,6 +32,17 @@ func servePage(w http.ResponseWriter, r *http.Request) {
 	webFiles.ServeHTTP(w, r)
 }
 
+func guarded(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		next(w, r)
+	}
+}
+
 func hostname() string {
 	if h, err := os.Hostname(); err == nil {
 		return h

@@ -14,8 +14,7 @@ type invite struct {
 	At time.Time `json:"at"`
 }
 
-// inviteLog remembers which admin let each person in. The provider cannot say it: it sees bifrost's
-// token make every change.
+// The provider cannot say who invited whom: it sees bifrost's token make every change.
 type inviteLog struct {
 	mu   sync.Mutex
 	path string // empty: kept in memory only
@@ -75,7 +74,7 @@ func (l *inviteLog) keep(lists []accessList) {
 	}
 }
 
-// of returns the invites of the given members; people added outside bifrost have none.
+// People added outside bifrost have no invite.
 func (l *inviteLog) of(lists []accessList) map[string]invite {
 	l.mu.Lock()
 	defer l.mu.Unlock()

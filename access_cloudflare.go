@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -38,10 +39,11 @@ type cloudflareAccess struct {
 	api     string
 	client  *http.Client
 
-	keysMu   sync.Mutex
-	keys     map[string]*rsa.PublicKey
-	keysAt   time.Time
-	certsURL string
+	keysMu    sync.Mutex
+	keys      map[string]*rsa.PublicKey
+	keysAt    time.Time
+	keysFetch chan struct{} // closed when the fetch in flight ends; nil when none is
+	certsURL  string
 
 	mu   sync.Mutex
 	snap cfSnapshot
@@ -147,21 +149,36 @@ func decodeSegment(seg string, v any) error {
 }
 
 // key returns the team's signing key by kid, fetching the keys again when Cloudflare has rotated them.
+// The fetch runs outside the lock: any caller can ask for an unknown kid, and known ones must not wait.
 func (c *cloudflareAccess) key(kid string) (*rsa.PublicKey, error) {
 	c.keysMu.Lock()
-	defer c.keysMu.Unlock()
 	if k, ok := c.keys[kid]; ok {
+		c.keysMu.Unlock()
 		return k, nil
 	}
-	if time.Since(c.keysAt) < cfKeysMinFetch {
-		return nil, fmt.Errorf("unknown key %q", kid)
+	if wait := c.keysFetch; wait != nil {
+		c.keysMu.Unlock()
+		<-wait
+		c.keysMu.Lock()
+	} else if time.Since(c.keysAt) >= cfKeysMinFetch {
+		c.keysAt = time.Now()
+		done := make(chan struct{})
+		c.keysFetch = done
+		c.keysMu.Unlock()
+		keys, err := c.fetchKeys()
+		c.keysMu.Lock()
+		c.keysFetch = nil
+		close(done)
+		if err == nil && len(keys) == 0 {
+			err = errors.New("no usable key in the answer")
+		}
+		if err != nil {
+			c.keysMu.Unlock()
+			return nil, fmt.Errorf("team keys: %w", err)
+		}
+		c.keys = keys
 	}
-	c.keysAt = time.Now()
-	keys, err := c.fetchKeys()
-	if err != nil {
-		return nil, fmt.Errorf("team keys: %w", err)
-	}
-	c.keys = keys
+	defer c.keysMu.Unlock()
 	if k, ok := c.keys[kid]; ok {
 		return k, nil
 	}
@@ -207,8 +224,9 @@ func (c *cloudflareAccess) fetchKeys() (map[string]*rsa.PublicKey, error) {
 type cfSnapshot struct {
 	link    string
 	origins []string
-	groups  []string        // ids in this app's include rules, in policy order
-	shared  map[string]bool // also referenced by another app
+	groups  []string        // ids in this app's allow rules, in policy order
+	shared  map[string]bool // also referenced by another app, or nested in a group
+	doubt   string          // why no group may be edited: a rule bifrost could not read may name any of them
 	at      time.Time
 }
 
@@ -221,10 +239,19 @@ type cfApp struct {
 }
 
 type cfPolicy struct {
-	ID      string            `json:"id"`
+	ID       string `json:"id"`
+	Decision string `json:"decision"`
+	cfRules
+}
+
+type cfRules struct {
 	Include []json.RawMessage `json:"include"`
 	Exclude []json.RawMessage `json:"exclude"`
 	Require []json.RawMessage `json:"require"`
+}
+
+func (r cfRules) groups() ([]string, error) {
+	return ruleGroups(slices.Concat(r.Include, r.Exclude, r.Require))
 }
 
 type cfRule struct {
@@ -242,14 +269,21 @@ func parseRule(raw json.RawMessage) cfRule {
 	return r
 }
 
-func ruleGroups(rules []json.RawMessage) []string {
+func ruleGroups(rules []json.RawMessage) ([]string, error) {
 	var ids []string
 	for _, raw := range rules {
-		if r := parseRule(raw); r.Group != nil && r.Group.ID != "" {
+		var r cfRule
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil, fmt.Errorf("unreadable rule %s", raw)
+		}
+		if r.Group != nil {
+			if r.Group.ID == "" {
+				return nil, fmt.Errorf("group rule without an id: %s", raw)
+			}
 			ids = append(ids, r.Group.ID)
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // Edits ask for a fresh one: a group attached to another app a minute ago is no longer ours.
@@ -269,16 +303,34 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	if err := c.list(ctx, "/access/policies", &reusable); err != nil {
 		return cfSnapshot{}, err
 	}
+	var groups []struct {
+		ID string `json:"id"`
+		cfRules
+	}
+	if err := c.list(ctx, "/access/groups", &groups); err != nil {
+		return cfSnapshot{}, err
+	}
 	byID := map[string]cfPolicy{}
 	for _, p := range reusable {
 		byID[p.ID] = p
 	}
 
+	var doubt string
+	groupsIn := func(what string, r cfRules) []string {
+		ids, err := r.groups()
+		if err != nil && doubt == "" {
+			doubt = fmt.Sprintf("%s: %v", what, err)
+		}
+		return ids
+	}
 	// An app lists its reusable policies by reference, sometimes without their rules.
-	rules := func(p cfPolicy) cfPolicy {
+	rules := func(app cfApp, p cfPolicy) cfPolicy {
 		if len(p.Include)+len(p.Exclude)+len(p.Require) == 0 {
 			if full, ok := byID[p.ID]; ok {
 				return full
+			}
+			if doubt == "" {
+				doubt = fmt.Sprintf("policy %s of app %s has no rules bifrost can read", p.ID, app.ID)
 			}
 		}
 		return p
@@ -287,8 +339,8 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	var mine *cfApp
 	for i, app := range apps {
 		for _, p := range app.Policies {
-			p = rules(p)
-			for _, g := range append(append(ruleGroups(p.Include), ruleGroups(p.Exclude)...), ruleGroups(p.Require)...) {
+			p = rules(app, p)
+			for _, g := range groupsIn("policy "+p.ID+" of app "+app.ID, p.cfRules) {
 				if appsOf[g] == nil {
 					appsOf[g] = map[string]bool{}
 				}
@@ -312,7 +364,17 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 		}
 	}
 	for _, p := range mine.Policies {
-		for _, g := range ruleGroups(rules(p).Include) {
+		p = rules(*mine, p)
+		if p.Decision != "allow" {
+			// Adding someone to a deny or bypass list would block them or skip the login, not share.
+			ids, _ := p.groups()
+			for _, g := range ids {
+				s.shared[g] = true
+			}
+			continue
+		}
+		include, _ := ruleGroups(p.Include)
+		for _, g := range include {
 			if !slices.Contains(s.groups, g) {
 				s.groups = append(s.groups, g)
 			}
@@ -325,8 +387,21 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 			}
 		}
 	}
+	// Members of a nested group also get whatever the outer group is used for.
+	for _, g := range groups {
+		for _, id := range groupsIn("group "+g.ID, g.cfRules) {
+			if id != g.ID {
+				s.shared[id] = true
+			}
+		}
+	}
+
+	s.doubt = doubt
 
 	c.mu.Lock()
+	if s.doubt != c.snap.doubt && s.doubt != "" {
+		log.Printf("[access] no list can be edited until this is sorted out: %s", s.doubt)
+	}
 	c.snap = s
 	c.mu.Unlock()
 	return s, nil
@@ -343,7 +418,7 @@ func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
 		if err != nil {
 			return site{}, err
 		}
-		out.lists = append(out.lists, accessList{ID: id, Name: g.name(), Editable: !s.shared[id], Members: g.emails()})
+		out.lists = append(out.lists, accessList{ID: id, Name: g.name(), Editable: !s.shared[id] && s.doubt == "", Members: g.emails()})
 	}
 	return out, nil
 }
@@ -387,15 +462,16 @@ func (c *cloudflareAccess) remove(ctx context.Context, v viewer, id, email strin
 
 // edit rewrites one editable group's include rules, leaving every other field and rule kind as is.
 func (c *cloudflareAccess) edit(ctx context.Context, v viewer, id string, change func([]json.RawMessage) []json.RawMessage) error {
+	c.editMu.Lock()
+	defer c.editMu.Unlock()
+	// Checked under the lock, so a group attached elsewhere while another edit ran is seen.
 	s, err := c.snapshot(ctx, true)
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(s.groups, id) || s.shared[id] {
+	if !slices.Contains(s.groups, id) || s.shared[id] || s.doubt != "" {
 		return errNotEditable
 	}
-	c.editMu.Lock()
-	defer c.editMu.Unlock()
 	g, err := c.group(ctx, id)
 	if err != nil {
 		return err
