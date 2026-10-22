@@ -16,6 +16,10 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /out/bifrost /usr/local/bin/bifrost
 
+# Owned by the user below so fresh named volumes are writable; bind mounts need the same owner on
+# the host, or `user:` set to the host folder's owner.
+RUN mkdir -p /data /state && chown 65532:65532 /data /state
+
 # Jellyfin's playlist and the cut-down guide.xml go to /data; run counters and the full guide to /state.
 VOLUME ["/data", "/state"]
 EXPOSE 6879
@@ -24,4 +28,5 @@ EXPOSE 6879
 HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
     CMD wget -qO- http://127.0.0.1:6879/healthz >/dev/null || exit 1
 
+USER 65532:65532
 ENTRYPOINT ["bifrost"]
