@@ -515,3 +515,30 @@ func change(t *testing.T, f *fakeCloudflare, a *access, method, body string) *ht
 	a.serveMembers(w, r)
 	return w
 }
+
+// A rule bifrost cannot read could name any group, so then no group is bifrost's alone.
+func TestAccessFailsClosedOnRulesItCannotRead(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		policy map[string]any
+	}{
+		{"a policy missing from the reusable listing", map[string]any{"id": "p-unlisted"}},
+		{"a group rule of another shape", map[string]any{"id": "p-odd", "include": []any{map[string]any{"group": "g-own"}}}},
+		{"a group rule without an id", map[string]any{"id": "p-odd", "include": []any{map[string]any{"group": map[string]any{}}}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeCloudflare(t)
+			f.apps[1][0]["policies"] = []any{c.policy}
+			a := f.access("boss@example.com")
+			if w := change(t, f, a, "POST", `{"group":"g-own","emails":["mallory@example.com"]}`); w.Code != http.StatusNotFound || len(f.puts) != 0 {
+				t.Fatalf("got %d %s, %d PUTs", w.Code, w.Body, len(f.puts))
+			}
+			_, got, raw := get(t, a, f.token("boss@example.com"))
+			for _, g := range got.Groups {
+				if g.Editable {
+					t.Fatalf("%s offered as editable: %s", g.ID, raw)
+				}
+			}
+		})
+	}
+}
