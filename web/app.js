@@ -7,7 +7,7 @@ const REFRESH_MS = 10000;
 // Drawn here from the email, so the address never leaves the page: two hues from its hash and the
 // first letter of the user part.
 const avatars = new Map();
-const nobody = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#8b90a7"><circle cx="16" cy="12" r="6"/><path d="M5 28c1.5-6 6-9 11-9s9.5 3 11 9z"/></svg>');
+const nobody = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#8b90a7"><circle cx="16" cy="12.5" r="6.5"/><ellipse cx="16" cy="31" rx="12" ry="10"/></svg>');
 const fnv = (s) => { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
 const gradient = (email) => {
   const h = fnv(email), a = h % 360, b = (a + 40 + (h >>> 9) % 80) % 360;
