@@ -63,7 +63,9 @@ func TestJudgeSwitchesOnlyToAClearlyBetterSource(t *testing.T) {
 		{"least bad by a wide margin", cur(0.5), cand(0.95, 18), true, true},
 		{"thin swarm needs twice the margin", cur(0.8), cand(1.15, 5), true, false},
 		{"thin swarm, far better", cur(0.8), cand(1.6, 5), true, true},
-		{"the playing one recovered", cur(0.8), cand(1.9, 25), false, false},
+		{"the playing one recovered", cur(1.0), cand(1.9, 25), false, false},
+		// 2026-10-23, F1: the playing source flapped around 0.85x on 2 peers and was between two starves.
+		{"recovered for now, short on average", reading{Headroom: 0.85, Peers: 2, Samples: 6}, cand(1.4, 4), false, true},
 		{"stalled candidate", cur(0.8), reading{Headroom: 1.9, Peers: 25, Samples: 3, Stalled: true}, true, false},
 		{"too few samples", cur(0.8), reading{Headroom: 1.9, Peers: 25, Samples: 1}, true, false},
 		{"every source bad: stay", cur(0.65), cand(0.75, 18), true, false},
