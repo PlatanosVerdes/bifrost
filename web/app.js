@@ -1,17 +1,24 @@
 // bifrost's status page: Lit components, one class per piece. The app element fetches, everything
 // below it renders what it is given. Nothing here opens a channel.
 import { LitElement, html, css, nothing } from "./vendor/lit-all.min.js";
-import { createAvatar, pixelArt } from "./vendor/dicebear-pixel-art.min.js";
 
 const REFRESH_MS = 10000;
 
-// Drawn here from the email, so the address never leaves the page.
+// Drawn here from the email, so the address never leaves the page: two hues from its hash and the
+// first letter of the user part.
 const avatars = new Map();
 const nobody = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#8b90a7"><circle cx="16" cy="12" r="6"/><path d="M5 28c1.5-6 6-9 11-9s9.5 3 11 9z"/></svg>');
+const fnv = (s) => { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+const gradient = (email) => {
+  const h = fnv(email), a = h % 360, b = (a + 40 + (h >>> 9) % 80) % 360;
+  const letter = (email.split("@")[0].match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toLocaleUpperCase();
+  return "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`
+    + `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${a} 75% 62%)"/><stop offset="1" stop-color="hsl(${b} 70% 45%)"/></linearGradient></defs>`
+    + `<rect width="64" height="64" fill="url(#g)"/><text x="32" y="42" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="28" font-weight="600" fill="#fff">${letter}</text></svg>`);
+};
 const avatar = (email) => {
-  if (email && !avatars.has(email)) {
-    try { avatars.set(email, createAvatar(pixelArt, { seed: email.toLowerCase() }).toDataUri()); } catch { avatars.set(email, nobody); }
-  }
+  email = email?.trim().toLowerCase();
+  if (email && !avatars.has(email)) avatars.set(email, gradient(email));
   return html`<img class="avatar" src=${email ? avatars.get(email) : nobody} alt="">`;
 };
 
@@ -355,7 +362,7 @@ class ShareDialog extends LitElement {
     ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
     li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
     li:first-child { border-top: 0; }
-    .avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; background: var(--chip); image-rendering: pixelated; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; background: var(--chip); }
     .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .who small { display: block; color: var(--muted); font-size: 12px; }
     .remove { font-size: 12px; padding: 5px 10px; }
@@ -474,7 +481,7 @@ class BifrostApp extends LitElement {
     .note { color: var(--muted); font-size: 12px; margin-top: 28px; max-width: 72ch; }
     .me { background: none; border: 0; padding: 0; border-radius: 50%; cursor: pointer; display: flex; }
     .me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); image-rendering: pixelated; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); }
     .menu { inset: auto; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink);
       padding: 14px; min-width: 220px; max-width: min(300px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
     .menu .who { display: flex; align-items: center; gap: 10px; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
