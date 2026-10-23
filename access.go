@@ -98,6 +98,7 @@ func newAccess(cfg config) *access {
 		c := newCloudflareAccess(cfg.accessTeamDomain, cfg.accessAUD, cfg.cloudflareAccountID, cfg.cloudflareAPIToken)
 		c.joinAUD, a.joinable = cfg.accessJoinAUD, cfg.accessJoinAUD != ""
 		a.provider = c
+		go c.keepWarm()
 		log.Printf("[access] sharing through Cloudflare Access %s, %d admins, invite links %v", cfg.accessTeamDomain, len(a.admins), a.joinable)
 	case cfg.accessTeamDomain != "":
 		log.Printf("[access] sharing is off: ACCESS_TEAM_DOMAIN is set but ACCESS_AUD, CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN is not")
