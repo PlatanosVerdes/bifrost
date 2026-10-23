@@ -29,6 +29,11 @@ const (
 	cfKeysMinFetch = 30 * time.Second // an unknown kid refetches the keys at most this often
 	cfClockSkew    = 30 * time.Second
 	cfMaxBody      = 8 << 20
+	// The Share dialog is answered from the last read: older than cfSiteFresh it is read again
+	// behind the answer, older than cfSiteMax before it.
+	cfSiteFresh = 30 * time.Second
+	cfSiteMax   = 10 * time.Minute
+	cfWarmEvery = 4 * time.Minute
 )
 
 type cloudflareAccess struct {
@@ -50,6 +55,12 @@ type cloudflareAccess struct {
 	snap cfSnapshot
 
 	editMu sync.Mutex // a group edit is a read and a write; two at once would lose one
+
+	siteMu      sync.Mutex
+	siteCache   site
+	siteAt      time.Time
+	siteGen     int // bumped by every edit, so a read that started before it is not kept
+	siteLoading bool
 }
 
 func newCloudflareAccess(team, aud, account, token string) *cloudflareAccess {
@@ -418,7 +429,51 @@ func (c *cloudflareAccess) snapshot(ctx context.Context, fresh bool) (cfSnapshot
 	return s, nil
 }
 
+// Only what is shown comes from here; edits read the app and the group fresh.
 func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
+	c.siteMu.Lock()
+	s, age := c.siteCache, time.Since(c.siteAt)
+	cached := !c.siteAt.IsZero() && age < cfSiteMax
+	if cached && age >= cfSiteFresh && !c.siteLoading {
+		c.siteLoading = true
+		go c.refreshSite()
+	}
+	c.siteMu.Unlock()
+	if cached {
+		return s, nil
+	}
+	return c.loadSite(ctx)
+}
+
+func (c *cloudflareAccess) refreshSite() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := c.loadSite(ctx); err != nil {
+		log.Printf("[access] could not read the lists: %v", err)
+	}
+	c.siteMu.Lock()
+	c.siteLoading = false
+	c.siteMu.Unlock()
+}
+
+// keepWarm reads the lists ahead of anyone opening Share: each read is two round trips of most of a second.
+func (c *cloudflareAccess) keepWarm() {
+	for {
+		c.refreshSite()
+		time.Sleep(cfWarmEvery)
+	}
+}
+
+func (c *cloudflareAccess) forgetSite() {
+	c.siteMu.Lock()
+	c.siteAt, c.siteGen = time.Time{}, c.siteGen+1
+	c.siteMu.Unlock()
+}
+
+func (c *cloudflareAccess) loadSite(ctx context.Context) (site, error) {
+	c.siteMu.Lock()
+	gen := c.siteGen
+	c.siteMu.Unlock()
 	s, err := c.snapshot(ctx, false)
 	if err != nil {
 		return site{}, err
@@ -437,6 +492,11 @@ func (c *cloudflareAccess) site(ctx context.Context, v viewer) (site, error) {
 	if err := parallel(jobs...); err != nil {
 		return site{}, err
 	}
+	c.siteMu.Lock()
+	if gen == c.siteGen {
+		c.siteCache, c.siteAt = out, time.Now()
+	}
+	c.siteMu.Unlock()
 	return out, nil
 }
 
@@ -519,6 +579,7 @@ func (c *cloudflareAccess) edit(ctx context.Context, v viewer, id string, change
 			body[k] = raw
 		}
 	}
+	defer c.forgetSite()
 	return c.call(ctx, http.MethodPut, "/access/groups/"+url.PathEscape(id), body, nil)
 }
 
