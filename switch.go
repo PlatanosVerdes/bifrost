@@ -108,7 +108,8 @@ func (p switchPolicy) judge(current, candidate reading, stillStarving bool) (boo
 		return false, fmt.Sprintf("too few samples (%d)", candidate.Samples)
 	case candidate.Stalled:
 		return false, "the candidate stalled"
-	case !stillStarving:
+	// A source that flaps around the bitrate "recovers" between its starves; only its average counts.
+	case !stillStarving && current.Headroom >= p.starvingBelow:
 		return false, "the playing source recovered"
 	case candidate.Headroom >= math.Max(need, p.minHeadroom):
 		return true, fmt.Sprintf("keeps up at %.2fx against %.2fx", candidate.Headroom, current.Headroom)

@@ -65,7 +65,8 @@ better source of its channel, under rules meant never to leave them with nothing
   least bad one is taken only by twice that margin: 0.95x is worth leaving 0.5x for, not 0.7x. A
   candidate with fewer than half the playing source's peers needs one margin more. One that
   stalled in its last sample, gave fewer than two usable samples, or a playing source that
-  recovered meanwhile, keeps the stream where it is.
+  recovered meanwhile and keeps up on average, keeps the stream where it is. One that only
+  recovered between two starves (0.85x on average) does not count as recovered.
 - **The playing source is not touched until the new one delivers.** The candidate takes over
   between two chunks: the viewers stay connected and get the new source's packets from its first
   TS sync on. The relay hands out whole 188-byte packets, so the cut never falls inside one. The
