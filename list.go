@@ -41,6 +41,7 @@ type config struct {
 	// Sharing (see access.go): off unless the team domain, app AUD tag, account and token are all set.
 	accessTeamDomain    string
 	accessAUD           string
+	accessJoinAUD       string // the app that lets anyone sign in on /join; empty: no invite links
 	cloudflareAccountID string
 	cloudflareAPIToken  string
 	admins              string // comma-separated emails that may change who has access
@@ -67,6 +68,7 @@ func loadConfig() config {
 
 		accessTeamDomain:    os.Getenv("ACCESS_TEAM_DOMAIN"),
 		accessAUD:           os.Getenv("ACCESS_AUD"),
+		accessJoinAUD:       os.Getenv("ACCESS_JOIN_AUD"),
 		cloudflareAccountID: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		cloudflareAPIToken:  os.Getenv("CLOUDFLARE_API_TOKEN"),
 		admins:              os.Getenv("BIFROST_ADMINS"),

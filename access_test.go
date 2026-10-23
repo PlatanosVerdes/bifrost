@@ -595,27 +595,27 @@ func TestAccessKeyFetch(t *testing.T) {
 	})
 	c := f.provider()
 	good := f.token("boss@example.com")
-	if _, err := c.verify(good, time.Now()); err != nil {
+	if _, err := c.verify(good, "aud-tv", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	junk := b64([]byte(`{"alg":"RS256","kid":"nope"}`)) + ".e30.AAAA"
 	c.keysAt = time.Now().Add(-time.Minute)
 	done := make(chan error)
 	go func() {
-		_, err := c.verify(junk, time.Now())
+		_, err := c.verify(junk, "aud-tv", time.Now())
 		done <- err
 	}()
 	for fetches.Load() < 2 {
 		time.Sleep(time.Millisecond)
 	}
-	if _, err := c.verify(good, time.Now()); err != nil {
+	if _, err := c.verify(good, "aud-tv", time.Now()); err != nil {
 		t.Fatalf("a known key failed while a fetch was in flight: %v", err)
 	}
 	answer <- `{"keys":[]}`
 	if err := <-done; err == nil {
 		t.Fatal("junk accepted")
 	}
-	if _, err := c.verify(good, time.Now()); err != nil {
+	if _, err := c.verify(good, "aud-tv", time.Now()); err != nil {
 		t.Fatalf("an empty answer threw the keys away: %v", err)
 	}
 }
