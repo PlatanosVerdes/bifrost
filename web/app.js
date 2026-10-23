@@ -332,7 +332,7 @@ customElements.define("activity-view", ActivityView);
 // --- sharing: who may open this page, kept by the access provider in front of bifrost -------------
 
 class ShareDialog extends LitElement {
-  static properties = { access: { attribute: false }, heading: {}, data: { state: true }, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true } };
+  static properties = { access: { attribute: false }, heading: {}, data: { state: true }, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true }, created: { state: true } };
   static styles = [base, css`
     dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 22px;
       background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
@@ -361,16 +361,17 @@ class ShareDialog extends LitElement {
     .remove { font-size: 12px; padding: 5px 10px; }
   `];
 
-  constructor() { super(); this.data = null; this.tab = "email"; this.error = ""; this.busy = false; this.copied = false; }
+  constructor() { super(); this.data = null; this.tab = "join"; this.error = ""; this.busy = false; this.copied = false; this.created = ""; }
 
   async open() {
-    this.error = ""; this.data = null;
+    this.error = ""; this.data = null; this.created = "";
     this.renderRoot.querySelector("dialog").showModal();
     try {
       const r = await fetch("api/access?lists=1");
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       this.data = data;
+      if (!data.joinable && this.tab === "join") this.tab = "email";
       await this.updateComplete;
       this.renderRoot.querySelector("form input")?.focus();
     } catch (e) {
@@ -378,10 +379,10 @@ class ShareDialog extends LitElement {
     }
   }
 
-  async change(method, body) {
+  async change(method, body, path = "api/access/members") {
     this.busy = true; this.error = "";
     try {
-      const r = await fetch("api/access/members", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       this.data = data;
@@ -401,8 +402,12 @@ class ShareDialog extends LitElement {
     if (emails.length && await this.change("POST", { group: group.id, emails })) input.value = "";
   }
 
-  copy() {
-    navigator.clipboard.writeText(this.data.link);
+  async createLink(group) {
+    if (await this.change("POST", { group: group.id }, "api/access/links")) this.created = this.data.created;
+  }
+
+  copy(text) {
+    navigator.clipboard.writeText(text);
     this.copied = true;
     setTimeout(() => { this.copied = false; }, 1500);
   }
@@ -422,6 +427,24 @@ class ShareDialog extends LitElement {
       ${group.editable && m !== me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
   }
 
+  copyBox(text, label) {
+    return html`<div class="copy"><input readonly .value=${text} aria-label=${label} @focus=${(e) => e.target.select()}>
+      <button class="btn primary" @click=${() => this.copy(text)}>${this.copied ? "Copied" : "Copy"}</button></div>`;
+  }
+
+  joinTab(group) {
+    if (!group) return html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`;
+    const links = Object.entries(this.data.links ?? {}).sort(([, a], [, b]) => a.expires.localeCompare(b.expires));
+    const day = (t) => new Date(t).toLocaleDateString([], { day: "numeric", month: "short" });
+    return html`${this.created
+        ? html`${this.copyBox(this.created, "Invite link")}<p class="hint">Send it by any chat. It lets one person in, for a week: they sign in with Google or a code sent to their email and are added to ${group.name}.</p>`
+        : html`<button class="btn primary" ?disabled=${this.busy} @click=${() => this.createLink(group)}>Create invite link</button>
+          <p class="hint">Whoever opens it first gets in, so send it only to the person you mean.</p>`}
+      ${links.length ? html`<h4>Invite links not used yet</h4><ul>${links.map(([id, l]) => html`<li>
+        <span class="who">Made by ${l.by === this.access.me?.toLowerCase() ? "you" : l.by}<small>works until ${day(l.expires)}</small></span>
+        <button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { id }, "api/access/links")}>Revoke</button></li>`)}</ul>` : nothing}`;
+  }
+
   render() {
     if (!this.access?.admin) return nothing;
     const a = this.data, editable = a?.groups.find((g) => g.editable);
@@ -431,17 +454,16 @@ class ShareDialog extends LitElement {
       <h3 id="share-title">Share ${this.heading}</h3>
       <p class="lead">People on this list can open this page after signing in with Google or a code sent to their email. They see the page only: streams never leave the house.</p>
       ${!a ? html`${this.error ? nothing : html`<p class="hint">Loading who has access…</p>`}` : html`
-      <div class="tabs" role="tablist">${tab("email", "Invite by email")}${tab("link", "Copy link")}</div>
-      ${this.tab === "email"
+      <div class="tabs" role="tablist">${a.joinable ? tab("join", "Invite link") : nothing}${tab("email", "Invite by email")}${tab("link", "Page link")}</div>
+      ${this.tab === "join" ? this.joinTab(editable) : this.tab === "email"
         ? editable
           ? html`<form @submit=${(e) => this.invite(e, editable)}>
               <input type="text" inputmode="email" autocomplete="off" autofocus placeholder="user@example.com" aria-label="Email addresses">
               <button class="btn primary" ?disabled=${this.busy}>Share</button></form>
             <p class="hint">Separate several addresses with commas.</p>`
           : html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`
-        : html`<div class="copy"><input readonly .value=${a.link} aria-label="Link to this page" @focus=${(e) => e.target.select()}>
-            <button class="btn primary" @click=${() => this.copy()}>${this.copied ? "Copied" : "Copy"}</button></div>
-          <p class="hint">Send it by any chat. It only opens for people on the list.</p>`}
+        : html`${this.copyBox(a.link, "Link to this page")}
+          <p class="hint">For people already on the list. To let someone new in, use an invite link or add their email.</p>`}
       ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
       ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}`}
       ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}

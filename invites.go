@@ -93,14 +93,15 @@ func (l *inviteLog) save() {
 	if l.path == "" {
 		return
 	}
-	if err := l.write(); err != nil {
+	if err := writeState(l.path, l.byTo); err != nil {
 		log.Printf("[access] could not save invites: %v", err)
 	}
 }
 
-func (l *inviteLog) write() error {
-	b, _ := json.MarshalIndent(l.byTo, "", "  ")
-	tmp := l.path + ".tmp"
+// writeState replaces a state file whole, so a crash halfway leaves the old one.
+func writeState(path string, v any) error {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -115,5 +116,5 @@ func (l *inviteLog) write() error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, l.path)
+	return os.Rename(tmp, path)
 }
