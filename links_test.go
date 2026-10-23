@@ -177,3 +177,78 @@ func TestJoinLinksKeepOnlyHashes(t *testing.T) {
 		t.Fatal("not kept across a restart")
 	}
 }
+
+// Anyone can sign in to the join app, so a wrong link must cost no Cloudflare call.
+func TestJoinMissesCallNoAPI(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.joinAccess(t)
+	_, got := sendLinks(t, a, "POST", f.token("boss@example.com"), `{"group":"g-own"}`)
+	link := strings.TrimPrefix(got.Created, "https://tv.example.com/join/")
+	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); w.Code != 303 {
+		t.Fatalf("bob: %d", w.Code)
+	}
+	before := f.calls.Load()
+	for _, l := range []string{"x", strings.Repeat("a", 32), link} {
+		if w := join(a, f.tokenFor("eve@example.com", "aud-join"), l); w.Code != 410 {
+			t.Fatalf("eve on %q: %d", l, w.Code)
+		}
+	}
+	if w := join(a, f.tokenFor("BOB@example.com", "aud-join"), link); w.Code != 303 {
+		t.Fatalf("bob reopening: %d", w.Code)
+	}
+	if n := f.calls.Load() - before; n != 0 {
+		t.Fatalf("%d Cloudflare calls", n)
+	}
+}
+
+func TestJoinTokenIsNoViewer(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := newAccess(config{admins: "boss@example.com"})
+	c := f.provider()
+	c.joinAUD = "aud-join"
+	a.provider, a.joinable = c, true
+	tok := f.tokenFor("boss@example.com", "aud-join")
+	if code, got, raw := get(t, a, tok); code != 200 || got.Admin || *got.Me != "" {
+		t.Fatalf("api/access: %d %s", code, raw)
+	}
+	if code, _ := sendLinks(t, a, "POST", tok, `{"group":"g-own"}`); code != 403 {
+		t.Fatalf("made a link with a join token: %d", code)
+	}
+}
+
+// A link that cannot be marked used on disk lets nobody in: a restart would hand it out again.
+func TestJoinFailsClosedWhenTheClaimIsNotSaved(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.joinAccess(t)
+	_, got := sendLinks(t, a, "POST", f.token("boss@example.com"), `{"group":"g-own"}`)
+	link := strings.TrimPrefix(got.Created, "https://tv.example.com/join/")
+	dir := filepath.Dir(a.links.path)
+	os.Chmod(dir, 0o500)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); w.Code != 503 {
+		t.Fatalf("bob: %d %s", w.Code, w.Body)
+	}
+	if len(f.puts) != 0 {
+		t.Fatal("bob was added")
+	}
+	os.Chmod(dir, 0o700)
+	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); w.Code != 303 || len(f.puts) != 1 {
+		t.Fatalf("retry: %d, %d PUTs", w.Code, len(f.puts))
+	}
+}
+
+func TestJoinLinkUsedBySomeoneAlreadyOnTheListStaysUnused(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.joinAccess(t)
+	_, got := sendLinks(t, a, "POST", f.token("boss@example.com"), `{"group":"g-own"}`)
+	link := strings.TrimPrefix(got.Created, "https://tv.example.com/join/")
+	if w := join(a, f.tokenFor("ana@example.com", "aud-join"), link); w.Code != 303 {
+		t.Fatalf("ana: %d", w.Code)
+	}
+	if p := a.links.pending(time.Now()); len(p) != 1 {
+		t.Fatalf("pending %v", p)
+	}
+	if reloaded, _ := loadJoinLinks(filepath.Dir(a.links.path)).find(link, time.Now()); reloaded.UsedBy != "" {
+		t.Fatalf("on disk: %+v", reloaded)
+	}
+}

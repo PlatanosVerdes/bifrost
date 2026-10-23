@@ -68,7 +68,7 @@ bifrost:
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](#sharing) |
 | `ACCESS_AUD` | empty (sharing off) | This bifrost's Access app's tag: Access app → Overview → Application Audience (AUD) Tag. Tokens for any other app are refused |
-| `ACCESS_JOIN_AUD` | empty (no invite links) | The AUD tag of a second Access app on `<domain>/join` that lets anyone sign in. See [Invite links](#invite-links) |
+| `ACCESS_JOIN_AUD` | empty (no invite links) | The AUD tag of a second Access app on `<domain>/join/*` that lets anyone sign in. See [Invite links](#invite-links) |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty (sharing off) | The account that holds the Access app, and an account-owned token with only Access: Apps Read, Access: Policies Read and Access: Groups Edit |
 | `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page |
 
@@ -141,12 +141,15 @@ work Google account, an old address). An invite link needs none: whoever opens i
 they like and is added to the list, by the address Access then vouches for.
 
 Access never lets someone off the list reach the page, so the link lives under a second Access app
-on `<domain>/join`, whose only policy lets in anyone who signs in (`Everyone`, with the same login
+on `<domain>/join/*` (without the `/*` it would cover `/join` alone), whose only policy lets in anyone who signs in (`Everyone`, with the same login
 methods). bifrost takes that app's tokens (`ACCESS_JOIN_AUD`) on `/join/<token>` and nowhere else.
 A link is 24 random bytes, kept only as a hash, made by an admin, good for a week, and used up by
-the first person it adds: someone already on the list who opens it (its sender checking it, or the
-person it let in opening it again) goes to the page and leaves it as it was. A link to a list
-another app has started to use since stops working, as editing it by email would.
+the first person it adds. It is marked used on disk before that person is added, so a failed write
+lets nobody in rather than letting a second person in after a restart. Someone already on the list
+who opens it (its sender checking it) goes to the page and leaves it unused; the person it let in can
+open it again until it expires. Since anyone can sign in to the join app, a wrong or used link is
+answered from memory, without a call to Cloudflare. A link to a list another app has started to use
+since stops working, as editing it by email would.
 
 ### The swarm
 

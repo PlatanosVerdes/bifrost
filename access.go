@@ -286,19 +286,36 @@ func (a *access) serveJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, now := r.PathValue("token"), time.Now()
 
+	// Nothing before the lock calls the provider: anyone can sign in here and try tokens.
+	gone := func() {
+		joinPage(w, http.StatusGone, "This invite link no longer works", "Each link lets one person in and lasts a week. Ask whoever sent it for a new one.")
+	}
 	a.joinMu.Lock()
 	defer a.joinMu.Unlock()
 	link, ok := a.links.find(token, now)
-	if !ok {
-		// The link already used may be opened again by the person it let in.
-		if s, err := a.provider.site(r.Context(), v); err == nil && slices.ContainsFunc(s.lists, func(l accessList) bool { return slices.Contains(l.Members, email[0]) }) {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-		joinPage(w, http.StatusGone, "This invite link no longer works", "Each link lets one person in and lasts a week. Ask whoever sent it for a new one.")
+	switch {
+	case !ok:
+		gone()
+		return
+	case link.UsedBy == email[0]:
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	case link.UsedBy != "":
+		gone()
+		return
+	}
+	if err := a.links.claim(token, email[0]); err != nil {
+		log.Printf("[access] could not save join links: %v", err)
+		joinPage(w, http.StatusServiceUnavailable, "Could not let you in just now", "Open the link again in a moment.")
 		return
 	}
 	added, err := a.provider.add(r.Context(), v, link.Group, email)
+	// Only a link that let someone new in is used up, so its sender opening it to check costs nothing.
+	if err != nil || len(added) == 0 {
+		if uerr := a.links.unclaim(token); uerr != nil {
+			log.Printf("[access] could not save join links: %v", uerr)
+		}
+	}
 	if errors.Is(err, errNotEditable) {
 		joinPage(w, http.StatusNotFound, "This invite link no longer works", "The list it adds you to cannot be changed from bifrost any more.")
 		return
@@ -308,9 +325,7 @@ func (a *access) serveJoin(w http.ResponseWriter, r *http.Request) {
 		joinPage(w, http.StatusBadGateway, "Could not let you in just now", "Open the link again in a moment.")
 		return
 	}
-	// Only a link that let someone new in is used up, so its sender opening it to check costs nothing.
 	if len(added) > 0 {
-		a.links.use(token)
 		a.invites.record(added, link.By, now)
 		log.Printf("[access] %s joined through a link from %s", added[0], link.By)
 	}

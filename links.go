@@ -19,6 +19,7 @@ type joinLink struct {
 	Group   string    `json:"group"`
 	By      string    `json:"by"`
 	Expires time.Time `json:"expires"`
+	UsedBy  string    `json:"used_by,omitempty"` // kept until it expires, so that person can open it again
 }
 
 // joinLinks keeps only a hash of each token, so the file alone lets nobody in.
@@ -66,7 +67,36 @@ func (l *joinLinks) find(token string, now time.Time) (joinLink, bool) {
 	return j, ok && now.Before(j.Expires)
 }
 
-func (l *joinLinks) use(token string) { l.revoke(linkID(token)) }
+// claim marks the link used on disk before anyone is added, so a failed write can never let a second
+// person in after a restart.
+func (l *joinLinks) claim(token, email string) error {
+	return l.mark(token, email)
+}
+
+func (l *joinLinks) unclaim(token string) error {
+	return l.mark(token, "")
+}
+
+func (l *joinLinks) mark(token, email string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	id := linkID(token)
+	j, ok := l.byID[id]
+	if !ok {
+		return nil
+	}
+	before := j
+	j.UsedBy = email
+	l.byID[id] = j
+	if l.path == "" {
+		return nil
+	}
+	if err := writeState(l.path, l.byID); err != nil {
+		l.byID[id] = before
+		return err
+	}
+	return nil
+}
 
 func (l *joinLinks) revoke(id string) {
 	l.mu.Lock()
@@ -77,18 +107,18 @@ func (l *joinLinks) revoke(id string) {
 	}
 }
 
-// pending forgets expired links on the way.
+// pending lists links nobody has used yet, and forgets expired ones on the way.
 func (l *joinLinks) pending(now time.Time) map[string]joinLink {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := map[string]joinLink{}
 	changed := false
 	for id, j := range l.byID {
-		if now.Before(j.Expires) {
-			out[id] = j
-		} else {
+		if !now.Before(j.Expires) {
 			delete(l.byID, id)
 			changed = true
+		} else if j.UsedBy == "" {
+			out[id] = j
 		}
 	}
 	if changed {
