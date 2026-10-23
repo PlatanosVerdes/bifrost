@@ -34,6 +34,7 @@ const (
 type cloudflareAccess struct {
 	team    string // example.cloudflareaccess.com
 	aud     string // the app's Application Audience (AUD) tag
+	joinAUD string // the app on <domain>/join that lets anyone sign in; empty: no invite links
 	account string
 	token   string
 	api     string
@@ -64,11 +65,23 @@ func newCloudflareAccess(team, aud, account, token string) *cloudflareAccess {
 // --- who is looking: the JWT ---------------------------------------------------------------------
 
 func (c *cloudflareAccess) viewer(r *http.Request) (viewer, error) {
+	return c.identity(r, c.aud)
+}
+
+// joiner is someone who has only signed in, not someone on a list: trusted with nothing but a join link.
+func (c *cloudflareAccess) joiner(r *http.Request) (viewer, error) {
+	if c.joinAUD == "" {
+		return viewer{}, errNoJoin
+	}
+	return c.identity(r, c.joinAUD)
+}
+
+func (c *cloudflareAccess) identity(r *http.Request, aud string) (viewer, error) {
 	tok := r.Header.Get("Cf-Access-Jwt-Assertion")
 	if tok == "" {
 		return viewer{}, errNoToken
 	}
-	claims, err := c.verify(tok, time.Now())
+	claims, err := c.verify(tok, aud, time.Now())
 	if err != nil {
 		return viewer{}, err
 	}
@@ -95,7 +108,7 @@ func (a *audience) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, (*[]string)(a))
 }
 
-func (c *cloudflareAccess) verify(tok string, now time.Time) (cfClaims, error) {
+func (c *cloudflareAccess) verify(tok, aud string, now time.Time) (cfClaims, error) {
 	var claims cfClaims
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
@@ -134,7 +147,7 @@ func (c *cloudflareAccess) verify(tok string, now time.Time) (cfClaims, error) {
 	}
 	// Without this, a token another app of the team issued would pass, and bifrost is not only
 	// reachable through Cloudflare.
-	if !slices.Contains(claims.Aud, c.aud) {
+	if !slices.Contains(claims.Aud, aud) {
 		return claims, fmt.Errorf("audience %v is not this app", claims.Aud)
 	}
 	return claims, nil

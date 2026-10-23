@@ -74,6 +74,8 @@ func routes(h *hub, acc *access) *http.ServeMux {
 	mux.HandleFunc("/api/channels", guarded(h.serveChannels))
 	mux.HandleFunc("/api/access", guarded(acc.serve))
 	mux.HandleFunc("/api/access/members", guarded(acc.serveMembers))
+	mux.HandleFunc("/api/access/links", guarded(acc.serveLinks))
+	mux.HandleFunc("/join/{token}", guarded(acc.serveJoin))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if isPage(r.URL.Path) {
 			guarded(servePage)(w, r)

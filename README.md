@@ -57,7 +57,7 @@ bifrost:
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY` | required | To run Refresh Guide |
 | `PUSHGATEWAY_URL` | empty | Where the `acestream_*` metrics go |
 | `OUTPUT_FILE` | `/data/channels_ace.m3u` | Jellyfin's playlist; `guide.xml` is written next to it |
-| `STATE_DIR` | `/state` | Run counters, the cached full guide, and `invites.json` (who invited each viewer, which Cloudflare cannot tell) |
+| `STATE_DIR` | `/state` | Run counters, the cached full guide, and `invites.json` (who invited each viewer, which Cloudflare cannot tell) and `join-links.json` (invite links not used yet, by hash) |
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
 | `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
@@ -68,6 +68,7 @@ bifrost:
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](#sharing) |
 | `ACCESS_AUD` | empty (sharing off) | This bifrost's Access app's tag: Access app → Overview → Application Audience (AUD) Tag. Tokens for any other app are refused |
+| `ACCESS_JOIN_AUD` | empty (no invite links) | The AUD tag of a second Access app on `<domain>/join/*` that lets anyone sign in. See [Invite links](#invite-links) |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty (sharing off) | The account that holds the Access app, and an account-owned token with only Access: Apps Read, Access: Policies Read and Access: Groups Edit |
 | `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page |
 
@@ -85,6 +86,8 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 | `GET /api/status` | The last list read and change, the last Jellyfin refresh, what is playing (channel, source, viewers, since, seconds until the engine's first video, the programme on air and the next one, from guide.xml, its `swarm`, and whether it is probing another source, how often it switched and its last switch and probe, see below), the last 20 opens with their outcome, and how Jellyfin is playing each live channel (which user on which device and client, copy or transcode, with Jellyfin's reasons, and its speed against live: ffmpeg's frame rate over the channel's, below 1 it stalls), asked from its /Sessions on each request |
 | `GET /api/access` | Whether sharing is on, and who is looking (`me`, `admin`). For an admin, also the link to send and the lists of people the Access app lets in, each with its members and whether bifrost may edit it |
 | `POST`, `DELETE /api/access/members` | Add addresses to a list (`{"group", "emails"}`) or take one off (`{"group", "email"}`). Admins only; answers what `GET /api/access` does |
+| `POST`, `DELETE /api/access/links` | Make an invite link for a list (`{"group"}`, answers it once as `created`) or take one back (`{"id"}`). Admins only |
+| `GET /join/<token>` | Adds whoever opens an invite link to its list, once, and sends them to the page |
 | `GET /healthz` | 200 once a list has been read |
 
 None of them opens a channel: `/api/status` and `/api/channels` only report what bifrost already
@@ -130,6 +133,23 @@ policies names. While any policy or rule in the account cannot be read, no group
 domain, a login method) stays as it is. bifrost never creates or deletes groups, policies or apps:
 make the app, a policy, and a group of its own for it in Cloudflare once, and manage the people
 from the page.
+
+#### Invite links
+
+Adding someone by email needs the address they will sign in with, which people often get wrong (a
+work Google account, an old address). An invite link needs none: whoever opens it signs in however
+they like and is added to the list, by the address Access then vouches for.
+
+Access never lets someone off the list reach the page, so the link lives under a second Access app
+on `<domain>/join/*` (without the `/*` it would cover `/join` alone), whose only policy lets in anyone who signs in (`Everyone`, with the same login
+methods). bifrost takes that app's tokens (`ACCESS_JOIN_AUD`) on `/join/<token>` and nowhere else.
+A link is 24 random bytes, kept only as a hash, made by an admin, good for a week, and used up by
+the first person it adds. It is marked used on disk before that person is added, so a failed write
+lets nobody in rather than letting a second person in after a restart. Someone already on the list
+who opens it (its sender checking it) goes to the page and leaves it unused; the person it let in can
+open it again until it expires. Since anyone can sign in to the join app, a wrong or used link is
+answered from memory, without a call to Cloudflare. A link to a list another app has started to use
+since stops working, as editing it by email would.
 
 ### The swarm
 
