@@ -1,4 +1,13 @@
-# bifrost
+<p align="center">
+  <img src="web/favicon.svg" width="96" alt="">
+</p>
+
+<h1 align="center">bifrost</h1>
+
+<p align="center">
+  <a href="https://github.com/PlatanosVerdes/bifrost/tags"><img src="https://img.shields.io/github/v/tag/PlatanosVerdes/bifrost?label=release&color=2f7d3a" alt="Latest release"></a>
+  <img src="https://img.shields.io/github/go-mod/go-version/PlatanosVerdes/bifrost" alt="Go version">
+</p>
 
 Bridges an AceStream channel list published on IPFS to Jellyfin's Live TV.
 
