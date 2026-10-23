@@ -339,7 +339,7 @@ customElements.define("activity-view", ActivityView);
 // --- sharing: who may open this page, kept by the access provider in front of bifrost -------------
 
 class ShareDialog extends LitElement {
-  static properties = { access: { attribute: false }, heading: {}, data: { state: true }, tab: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true }, created: { state: true } };
+  static properties = { access: { attribute: false }, heading: {}, data: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true }, created: { state: true } };
   static styles = [base, css`
     dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 22px;
       background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
@@ -347,9 +347,6 @@ class ShareDialog extends LitElement {
     h3 { margin: 0 32px 8px 0; font-family: var(--font-display); font-weight: 500; font-size: 20px; }
     .close { position: absolute; top: 14px; right: 14px; }
     p.lead { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-    .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
-    .tabs button { background: none; border: 0; padding: 8px 0; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-    .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
     form, .copy { display: flex; gap: 8px; }
     input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
     input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -368,7 +365,7 @@ class ShareDialog extends LitElement {
     .remove { font-size: 12px; padding: 5px 10px; }
   `];
 
-  constructor() { super(); this.data = null; this.tab = "join"; this.error = ""; this.busy = false; this.copied = false; this.created = ""; }
+  constructor() { super(); this.data = null; this.error = ""; this.busy = false; this.copied = false; this.created = ""; }
 
   async open() {
     this.error = ""; this.data = null; this.created = "";
@@ -378,9 +375,6 @@ class ShareDialog extends LitElement {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       this.data = data;
-      if (!data.joinable && this.tab === "join") this.tab = "email";
-      await this.updateComplete;
-      this.renderRoot.querySelector("form input")?.focus();
     } catch (e) {
       this.error = e.message;
     }
@@ -439,8 +433,7 @@ class ShareDialog extends LitElement {
       <button class="btn primary" @click=${() => this.copy(text)}>${this.copied ? "Copied" : "Copy"}</button></div>`;
   }
 
-  joinTab(group) {
-    if (!group) return html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`;
+  joinSection(group) {
     const links = Object.entries(this.data.links ?? {}).sort(([, a], [, b]) => a.expires.localeCompare(b.expires));
     const day = (t) => new Date(t).toLocaleDateString([], { day: "numeric", month: "short" });
     return html`${this.created
@@ -455,22 +448,19 @@ class ShareDialog extends LitElement {
   render() {
     if (!this.access?.admin) return nothing;
     const a = this.data, editable = a?.groups.find((g) => g.editable);
-    const tab = (id, label) => html`<button role="tab" aria-selected=${this.tab === id} @click=${() => { this.tab = id; }}>${label}</button>`;
     return html`<dialog aria-labelledby="share-title">
       <button class="btn close" aria-label="Close" @click=${() => this.renderRoot.querySelector("dialog").close()}>✕</button>
       <h3 id="share-title">Share ${this.heading}</h3>
       <p class="lead">People on this list can open this page after signing in with Google or a code sent to their email. They see the page only: streams never leave the house.</p>
       ${!a ? html`${this.error ? nothing : html`<p class="hint">Loading who has access…</p>`}` : html`
-      <div class="tabs" role="tablist">${a.joinable ? tab("join", "Invite link") : nothing}${tab("email", "Invite by email")}${tab("link", "Page link")}</div>
-      ${this.tab === "join" ? this.joinTab(editable) : this.tab === "email"
-        ? editable
-          ? html`<form @submit=${(e) => this.invite(e, editable)}>
-              <input type="text" inputmode="email" autocomplete="off" autofocus placeholder="user@example.com" aria-label="Email addresses">
-              <button class="btn primary" ?disabled=${this.busy}>Share</button></form>
-            <p class="hint">Separate several addresses with commas.</p>`
-          : html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`
-        : html`${this.copyBox(a.link, "Link to this page")}
-          <p class="hint">For people already on the list. To let someone new in, use an invite link or add their email.</p>`}
+      ${editable
+        ? html`${a.joinable ? this.joinSection(editable) : nothing}
+          <h4>${a.joinable ? "Or add their email" : "Add their email"}</h4>
+          <form @submit=${(e) => this.invite(e, editable)}>
+            <input type="text" inputmode="email" autocomplete="off" placeholder="user@example.com" aria-label="Email addresses">
+            <button class="btn ${a.joinable ? "" : "primary"}" ?disabled=${this.busy}>Add</button></form>
+          <p class="hint">They must sign in with this exact address. Separate several with commas.</p>`
+        : html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`}
       ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
       ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}`}
       ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}

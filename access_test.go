@@ -683,3 +683,21 @@ func TestAccessIdentityNeedsNoAPICall(t *testing.T) {
 		t.Fatalf("answering who is looking cost %d Cloudflare calls", n)
 	}
 }
+
+// Share opens from the last read; an edit made from bifrost shows at once.
+func TestAccessListsAreCached(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	get(t, a, f.token("boss@example.com"))
+	before := f.calls.Load()
+	if _, got, _ := get(t, a, f.token("boss@example.com")); len(got.Groups) != 2 || f.calls.Load() != before {
+		t.Fatalf("%d calls for a second open", f.calls.Load()-before)
+	}
+	r := httptest.NewRequest("POST", "/api/access/members", strings.NewReader(`{"group":"g-own","emails":["bob@example.com"]}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.token("boss@example.com"))
+	a.serveMembers(httptest.NewRecorder(), r)
+	if _, got, _ := get(t, a, f.token("boss@example.com")); !slices.Contains(got.Groups[0].Members, "bob@example.com") {
+		t.Fatalf("bob missing after the edit: %v", got.Groups[0].Members)
+	}
+}
