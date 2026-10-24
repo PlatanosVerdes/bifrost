@@ -243,6 +243,7 @@ type channelInfo struct {
 	LastOpen *openRecord   `json:"last_open,omitempty"`
 	Now      *airing       `json:"now,omitempty"`
 	Next     *airing       `json:"next,omitempty"`
+	Sources  []sourceFacts `json:"sources"` // the playlist's order, with what was last seen of each
 }
 
 // serveChannels is the catalog for players that go to the engine directly (farnsworth): each
@@ -267,7 +268,7 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, channelInfo{Slug: slug, Name: g.Name, Group: extractAttr(g.extinf, "group-title"),
 			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs),
-			LastOpen: h.status.lastOpen(slug)})
+			LastOpen: h.status.lastOpen(slug), Sources: h.sourcesOf(g.IDs)})
 		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
 			out[len(out)-1].Playing = &st

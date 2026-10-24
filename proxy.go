@@ -60,6 +60,7 @@ type hub struct {
 	probedAt      map[string]map[string]time.Time // slug -> content id -> when it was last probed
 	switches      map[string]int                  // slug -> source switches since bifrost started
 	remuxRestarts map[string]int
+	facts         map[string]*sourceFacts // content id -> what was last seen of it
 	probes        atomic.Int64
 
 	ffmpeg string // remuxes every source when set; empty relays sources raw
@@ -111,7 +112,8 @@ func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
 		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
 		schedule: &schedule{}, swarmEvery: 5 * time.Second, policy: defaultPolicy, lastProbe: map[string]time.Time{},
-		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{}}
+		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{},
+		facts: map[string]*sourceFacts{}}
 }
 
 // The engine answers its redirects with no length and keeps the connection open, so a redirect on
@@ -288,17 +290,24 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 		target := s.h.base + "/ace/getstream?id=" + id
 		r, ok := open(ctx, s.h.client, target, headers, label, srcDeadline)
 		if !ok {
+			if ctx.Err() == nil {
+				s.h.noteOutcome(id, "failed")
+			}
 			continue
 		}
 		b, ok := awaitFirstBytes(ctx, r.Body, label, time.Now(), srcDeadline)
 		if !ok {
 			r.Body.Close()
+			if ctx.Err() == nil {
+				s.h.noteOutcome(id, "failed")
+			}
 			if i < len(p.sources)-1 && ctx.Err() == nil {
 				log.Printf("[proxy] %s no video, trying the next source", label)
 			}
 			continue
 		}
 		resp, first, chosen = r, b, id
+		s.h.noteOutcome(id, "played")
 		if p.slug != "" {
 			s.h.mu.Lock()
 			s.h.lastGood[p.slug] = id
@@ -447,7 +456,9 @@ func (s *stream) remux(ctx context.Context, up *upstream) *remux {
 	if s.h.ffmpeg == "" {
 		return nil
 	}
-	r, err := startRemux(ctx, s.h.ffmpeg, s.label+" ["+short(up.id)+"]")
+	r, err := startRemux(ctx, s.h.ffmpeg, s.label+" ["+short(up.id)+"]", func(height int, audio string) {
+		s.h.noteSource(up.id, func(f *sourceFacts) { f.Height, f.Audio = height, audio })
+	})
 	if err != nil {
 		log.Printf("[proxy] %s plays raw, ffmpeg did not start: %v", s.label, err)
 		return nil

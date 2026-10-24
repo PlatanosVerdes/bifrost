@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,11 +19,11 @@ const (
 	remuxBacklog    = 64
 	remuxStuckAfter = 10 * time.Second
 	remuxStartWait  = 15 * time.Second
-	stderrLines     = 10 // per run, so a corrupt source does not flood the log
+	stderrLines     = 5 // the end of ffmpeg's stderr, logged when it exits on its own
 )
 
-// fatal: at error, the decoders ffmpeg probes with complain about every frame before the first keyframe.
-var remuxArgs = []string{"-hide_banner", "-nostdin", "-loglevel", "fatal",
+// info for the stream listing the page shows; the rest of stderr is noise from the probing decoders.
+var remuxArgs = []string{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info",
 	"-probesize", "2000000", "-analyzeduration", "2000000", "-f", "mpegts", "-i", "pipe:0",
 	"-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"}
 
@@ -35,7 +36,7 @@ type remux struct {
 	delivered bool // set by the relay once it has played something from this run
 }
 
-func startRemux(parent context.Context, bin, label string) (*remux, error) {
+func startRemux(parent context.Context, bin, label string, onInfo func(height int, audio string)) (*remux, error) {
 	ctx, cancel := context.WithCancel(parent)
 	cmd := exec.CommandContext(ctx, bin, remuxArgs...)
 	stdin, err := cmd.StdinPipe()
@@ -69,9 +70,29 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 	}()
 	go func() {
 		sc := bufio.NewScanner(stderr)
-		for n := 0; sc.Scan(); n++ {
-			if n < stderrLines {
-				log.Printf("[remux] %s: %s", label, sc.Text())
+		var height int
+		var audio string
+		var last []string
+		listing := true
+		for sc.Scan() {
+			line := sc.Text()
+			if listing {
+				if strings.HasPrefix(line, "Output #0") {
+					listing = false
+					onInfo(height, audio)
+				} else if h, a := streamInfo(line); h > 0 && height == 0 {
+					height = h
+				} else if a != "" && audio == "" {
+					audio = a
+				}
+			}
+			if last = append(last, line); len(last) > stderrLines {
+				last = last[1:]
+			}
+		}
+		if ctx.Err() == nil {
+			for _, line := range last {
+				log.Printf("[remux] %s: %s", label, line)
 			}
 		}
 	}()

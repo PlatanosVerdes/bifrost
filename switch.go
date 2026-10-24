@@ -289,6 +289,17 @@ type probeRecord struct {
 
 // maybeProbe runs after every sample of the playing source.
 func (s *stream) maybeProbe(w *swarm) {
+	if st := w.status(); st != nil && !st.SampledAt.IsZero() {
+		s.mu.Lock()
+		playing := s.source
+		s.mu.Unlock()
+		s.h.noteSource(playing, func(f *sourceFacts) {
+			f.Peers, f.SeenAt, f.Outcome = st.Peers, st.SampledAt, "played"
+			if st.Headroom > 0 {
+				f.Headroom = st.Headroom
+			}
+		})
+	}
 	if s.slug == "" {
 		return
 	}
@@ -358,6 +369,7 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 	resp, ok := open(pctx, s.h.client, target, s.headers, label, openBy)
 	if !ok {
 		if ctx.Err() == nil {
+			s.h.noteOutcome(cand, "failed")
 			keep("never produced a stream")
 		}
 		return
@@ -366,6 +378,7 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 	if !expired.Stop() || !ok {
 		resp.Body.Close()
 		if ctx.Err() == nil {
+			s.h.noteOutcome(cand, "failed")
 			keep("sent no video")
 		}
 		return
@@ -386,6 +399,9 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 	}
 	r := candidateReading(samples, w.rate())
 	after = &r
+	s.h.noteSource(cand, func(f *sourceFacts) {
+		f.Headroom, f.Peers, f.SeenAt, f.Outcome = r.Headroom, int(r.Peers), time.Now(), "probed"
+	})
 	stillStarving := w.status().Starving
 	log.Printf("[swarm] %s probe %s: %.2fx, %.0f peers over %d samples; playing %s: %.2fx, %.0f peers, starving %t",
 		s.label, short(cand), r.Headroom, r.Peers, r.Samples, short(current), before.Headroom, before.Peers, stillStarving)

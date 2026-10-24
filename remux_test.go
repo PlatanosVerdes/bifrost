@@ -109,7 +109,7 @@ func TestRemuxedSwitchKeepsOneClock(t *testing.T) {
 	reb := newRebaser()
 	var joined []byte
 	for i, src := range [][]byte{a, b} {
-		r, err := startRemux(context.Background(), bin, "test")
+		r, err := startRemux(context.Background(), bin, "test", func(int, string) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -282,6 +282,11 @@ func TestSwitchThroughTheProxyKeepsOneClock(t *testing.T) {
 	h.mu.Unlock()
 	if switches != 1 {
 		t.Fatalf("%d switches, want the slow source switched to the fast one once", switches)
+	}
+	for _, f := range h.sourcesOf([]string{slowSource, fastSource}) {
+		if f.Height != 240 || f.Audio != "AAC mono" {
+			t.Errorf("%s: %dp %q from ffmpeg's listing, want 240p AAC mono", short(f.ID), f.Height, f.Audio)
+		}
 	}
 	path := filepath.Join(dir, "watched.ts")
 	os.WriteFile(path, got[:len(got)/tsPacket*tsPacket], 0o644)
