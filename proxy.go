@@ -55,6 +55,7 @@ type hub struct {
 	switches      map[string]int                  // slug -> source switches since bifrost started
 	remuxRestarts map[string]int
 	facts         map[string]*sourceFacts // content id -> what was last seen of it
+	factsDirty    bool
 	probes        atomic.Int64
 
 	ffmpeg  string // remuxes every source when set; empty relays sources raw
