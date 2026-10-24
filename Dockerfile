@@ -7,7 +7,7 @@ ARG VERSION=local
 COPY go.mod ./
 COPY *.go ./
 COPY web/ ./web/
-COPY slate/offair.ts ./slate/
+COPY slate/offair.ts slate/loading.ts ./slate/
 # Static binary: the runtime image has no libc to link against.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost .
 

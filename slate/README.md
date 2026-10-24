@@ -1,4 +1,9 @@
-# The slate
+# The slates
+
+`loading.ts` is what a channel shows while its sources are first tried: the wordmark still, "Tuning in…", a
+lit segment sweeping a bar every 2 s, over a warm breathing noise bed (`hum.py`) that swells with each
+sweep. Made by `loading.py` and `hum.py` the same way as below (`tuning.png` is its caption).
+
 
 `offair.ts` is what a channel plays while no source has video yet: 24 s of the bifrost wordmark
 bouncing corner to corner, changing colour on each bounce, over a scrolling spectrum bar, with a
