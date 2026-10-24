@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,6 +168,173 @@ func TestRemuxedSwitchKeepsOneClock(t *testing.T) {
 		// About 4 s of the first source and 5 of the second, minus what precedes the second's keyframe.
 		if prev < 7 {
 			t.Errorf("%s ends at %.1fs over %d packets, want both sources in it", stream, prev, n)
+		}
+	}
+}
+
+// psiPacket is a TS packet on pid carrying one section, its CRC filled in.
+func psiPacket(pid uint16, section []byte) []byte {
+	p := bytes.Repeat([]byte{0xff}, tsPacket)
+	p[0], p[1], p[2], p[3], p[4] = tsSync, 0x40|byte(pid>>8), byte(pid), 0x10, 0
+	crc := crc32MPEG(section)
+	copy(p[5:], append(section, byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc)))
+	return p
+}
+
+func pmtSection(streamType byte) []byte {
+	// table 2, length 18, program 1, version 0, PCR PID 0x100, one stream of streamType on 0x100
+	return []byte{2, 0xb0, 18, 0, 1, 0xc1, 0, 0, 0xe1, 0, 0xf0, 0, streamType, 0xe1, 0, 0xf0, 0}
+}
+
+func TestRebaserVersionsAChangedPMT(t *testing.T) {
+	pat := psiPacket(0, []byte{0, 0xb0, 13, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0})
+	reb := newRebaser()
+	section := func(p []byte) []byte { return psiSection(p[4:]) }
+
+	h264 := psiPacket(0x1000, pmtSection(0x1b))
+	want := append([]byte(nil), h264...)
+	reb.push(append(append([]byte(nil), pat...), h264...))
+	if !bytes.Equal(h264, want) {
+		t.Error("the first PMT was changed")
+	}
+
+	again := reb.splice(append(append([]byte(nil), pat...), psiPacket(0x1000, pmtSection(0x1b))...))[tsPacket:]
+	if !bytes.Equal(section(again), section(want)) {
+		t.Error("a PMT the same as the last one was changed")
+	}
+
+	hevc := reb.splice(append(append([]byte(nil), pat...), psiPacket(0x1000, pmtSection(0x24))...))[tsPacket:]
+	sec := section(hevc)
+	if v := sec[5] >> 1 & 0x1f; v != 1 {
+		t.Errorf("a PMT with another codec kept version %d, want 1", v)
+	}
+	if crc32MPEG(sec) != 0 {
+		t.Error("the versioned PMT's CRC does not check")
+	}
+
+	repeat := psiPacket(0x1000, pmtSection(0x24))
+	reb.push(repeat)
+	if v := section(repeat)[5] >> 1 & 0x1f; v != 1 {
+		t.Errorf("the run's repeated PMT has version %d, want 1 like its first", v)
+	}
+}
+
+func TestCRCMatchesFFmpeg(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("no ffmpeg")
+	}
+	out, err := exec.Command(bin, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=25", "-t", "1",
+		"-c:v", "libx264", "-f", "mpegts", "pipe:1").Output()
+	if err != nil {
+		t.Skipf("ffmpeg cannot make a test source: %v", err)
+	}
+	checked := 0
+	for i := 0; i+tsPacket <= len(out); i += tsPacket {
+		p := out[i : i+tsPacket]
+		pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
+		if p[1]&0x40 == 0 || (pid != 0 && pid != 0x1000) {
+			continue
+		}
+		if sec := psiSection(p[4:]); sec != nil {
+			if crc32MPEG(sec) != 0 {
+				t.Fatalf("PID %#x: ffmpeg's section does not check against our CRC", pid)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no PAT or PMT to check")
+	}
+}
+
+// A starving source switched to a better one through the proxy, both real video remuxed by real
+// ffmpeg, reaches the viewer as one stream whose clock never goes back or stops.
+func TestSwitchThroughTheProxyKeepsOneClock(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("no ffmpeg")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("no ffprobe")
+	}
+	dir := t.TempDir()
+	source := func(name, offset string, extra ...string) []byte {
+		path := filepath.Join(dir, name)
+		args := append([]string{"-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi",
+			"-i", "sine=sample_rate=48000", "-t", "30", "-c:v", "libx264", "-g", "50", "-preset", "ultrafast",
+			"-b:v", "300k", "-c:a", "aac", "-output_ts_offset", offset}, extra...)
+		if out, err := exec.Command(bin, append(args, "-f", "mpegts", path)...).CombinedOutput(); err != nil {
+			t.Skipf("ffmpeg cannot make a test source: %v %s", err, out)
+		}
+		b, _ := os.ReadFile(path)
+		return b
+	}
+	engine := newSourceEngine(map[string]int{slowSource: 100, fastSource: 4000})
+	engine.media = map[string][]byte{slowSource: source("slow.ts", "5000"),
+		fastSource: source("fast.ts", "70000", "-mpegts_start_pid", "0x300", "-mpegts_pmt_start_pid", "0x1400")}
+	srv, h := newSwitchingProxy(t, engine, slowSource, fastSource)
+	h.ffmpeg = bin
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/dazn-laliga-1080p", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+
+	h.mu.Lock()
+	switches := h.switches["dazn-laliga-1080p"]
+	h.mu.Unlock()
+	if switches != 1 {
+		t.Fatalf("%d switches, want the slow source switched to the fast one once", switches)
+	}
+	path := filepath.Join(dir, "watched.ts")
+	os.WriteFile(path, got[:len(got)/tsPacket*tsPacket], 0o644)
+	// Spliced raw, the new source's PIDs show up as a second video and audio the player never plays.
+	probe, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", path).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(probe, &found); err != nil || len(found.Streams) != 2 {
+		t.Errorf("the viewer got streams %+v, want one video and one audio", found.Streams)
+	}
+	size := int64(len(got) / tsPacket * tsPacket)
+	for _, stream := range []string{"v:0", "a:0"} {
+		out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", stream, "-show_entries", "packet=dts_time,pos",
+			"-of", "csv=p=0", path).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var prev float64
+		var lastPos int64
+		n := 0
+		for _, line := range strings.Fields(string(out)) {
+			fields := strings.Split(strings.TrimSuffix(line, ","), ",")
+			if len(fields) < 2 {
+				continue
+			}
+			ts, err := strconv.ParseFloat(fields[0], 64)
+			if err != nil {
+				continue
+			}
+			if n > 0 && (ts < prev || ts-prev > 0.5) {
+				t.Errorf("%s jumps from %.3f to %.3f", stream, prev, ts)
+			}
+			prev, n = ts, n+1
+			lastPos, _ = strconv.ParseInt(fields[1], 10, 64)
+		}
+		// Spliced raw, the playing track just ends at the switch and the rest is on PIDs it never reads.
+		if lastPos < size*9/10 {
+			t.Errorf("%s stops at byte %d of %d, after %d packets: the new source never reached it", stream, lastPos, size, n)
 		}
 	}
 }

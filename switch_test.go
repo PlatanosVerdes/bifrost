@@ -193,6 +193,7 @@ type sourceEngine struct {
 	opened  map[string]int
 	live    map[string]int
 	players map[string]context.CancelFunc
+	media   map[string][]byte // real TS to play for an id, once, instead of marker packets
 }
 
 func newSourceEngine(down map[string]int) *sourceEngine {
@@ -251,6 +252,26 @@ func (e *sourceEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			e.mu.Unlock()
 		}()
 		w.Header().Set("Content-Type", "video/mp2t")
+		e.mu.Lock()
+		media := e.media[id]
+		e.mu.Unlock()
+		if media != nil {
+			for rest := media; len(rest) > 0; {
+				n := min(len(rest), 7*tsPacket)
+				if _, err := w.Write(rest[:n]); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
+				rest = rest[n:]
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Millisecond):
+				}
+			}
+			<-ctx.Done()
+			return
+		}
 		// Seven packets at a time, starting a packet off so the relay has to find its sync.
 		piece := tsStream(7, id[0])
 		w.Write(piece[tsPacket/2:])

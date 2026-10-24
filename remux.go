@@ -22,7 +22,8 @@ const (
 	stderrLines    = 10 // per run, so a corrupt source does not flood the log
 )
 
-var remuxArgs = []string{"-hide_banner", "-nostdin", "-loglevel", "error",
+// fatal: at error, the decoders ffmpeg probes with complain about every frame before the first keyframe.
+var remuxArgs = []string{"-hide_banner", "-nostdin", "-loglevel", "fatal",
 	"-probesize", "2000000", "-analyzeduration", "2000000", "-f", "mpegts", "-i", "pipe:0",
 	"-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"}
 
@@ -91,7 +92,9 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 				if err != io.EOF && ctx.Err() == nil {
 					log.Printf("[remux] %s: %v", label, err)
 				}
-				cmd.Wait()
+				if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+					log.Printf("[remux] %s: ffmpeg %v", label, err)
+				}
 				return
 			}
 		}
@@ -131,10 +134,16 @@ type tsRebaser struct {
 	offset  int64
 	cc      map[uint16]byte  // next continuity counter per PID
 	last    map[uint16]int64 // last DTS (or PTS) written per PID, after the offset
+	pmts    map[uint16]bool  // PMT PIDs, from the PAT
+	// Every ffmpeg run writes its PMT as version 0, so a source with other codecs or tracks would
+	// look unchanged to the player: a PMT that differs from the last one gets the next version.
+	pmtBody    map[uint16]string
+	pmtVersion map[uint16]byte
 }
 
 func newRebaser() *tsRebaser {
-	return &tsRebaser{cc: map[uint16]byte{}, last: map[uint16]int64{}}
+	return &tsRebaser{cc: map[uint16]byte{}, last: map[uint16]int64{}, pmts: map[uint16]bool{},
+		pmtBody: map[uint16]string{}, pmtVersion: map[uint16]byte{}}
 }
 
 // spliceLimit is how much of a new run is held for ready before it plays anyway: ~4 s of a 4 Mbit/s channel.
@@ -240,6 +249,14 @@ func (t *tsRebaser) rewrite(p []byte) {
 	if afc&1 == 0 || p[1]&0x40 == 0 || payload+14 > tsPacket {
 		return
 	}
+	switch {
+	case pid == 0:
+		t.notePAT(p[payload:])
+		return
+	case t.pmts[pid]:
+		t.versionPMT(pid, p[payload:])
+		return
+	}
 	pes := p[payload:]
 	if pes[0] != 0 || pes[1] != 0 || pes[2] != 1 {
 		return
@@ -257,6 +274,69 @@ func (t *tsRebaser) rewrite(p []byte) {
 		last = dts
 	}
 	t.last[pid] = last
+}
+
+// psiSection is the section a payload starts with, if it fits in this packet.
+func psiSection(payload []byte) []byte {
+	if len(payload) < 1 || 1+int(payload[0])+3 > len(payload) {
+		return nil
+	}
+	sec := payload[1+int(payload[0]):]
+	n := 3 + int(sec[1]&0x0f)<<8 + int(sec[2])
+	if n < 12 || n > len(sec) {
+		return nil
+	}
+	return sec[:n]
+}
+
+func (t *tsRebaser) notePAT(payload []byte) {
+	sec := psiSection(payload)
+	if sec == nil || sec[0] != 0 {
+		return
+	}
+	for i := 8; i+4 <= len(sec)-4; i += 4 {
+		if program := int(sec[i])<<8 | int(sec[i+1]); program != 0 {
+			t.pmts[uint16(sec[i+2]&0x1f)<<8|uint16(sec[i+3])] = true
+		}
+	}
+}
+
+func (t *tsRebaser) versionPMT(pid uint16, payload []byte) {
+	sec := psiSection(payload)
+	if sec == nil || sec[0] != 2 {
+		return
+	}
+	body := string(sec[:5]) + string(sec[6:len(sec)-4])
+	version, seen := t.pmtVersion[pid]
+	switch {
+	case !seen:
+		version = sec[5] >> 1 & 0x1f
+	case body != t.pmtBody[pid]:
+		version = (version + 1) & 0x1f
+	}
+	t.pmtBody[pid], t.pmtVersion[pid] = body, version
+	if sec[5]>>1&0x1f == version {
+		return
+	}
+	sec[5] = sec[5]&0xc1 | version<<1
+	crc := crc32MPEG(sec[:len(sec)-4])
+	sec[len(sec)-4], sec[len(sec)-3], sec[len(sec)-2], sec[len(sec)-1] = byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc)
+}
+
+// crc32MPEG is the CRC-32/MPEG-2 PSI sections end with.
+func crc32MPEG(b []byte) uint32 {
+	crc := uint32(0xffffffff)
+	for _, c := range b {
+		crc ^= uint32(c) << 24
+		for range 8 {
+			if crc&0x80000000 != 0 {
+				crc = crc<<1 ^ 0x04c11db7
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
 }
 
 // pesTimestamp is a packet's DTS, or its PTS when it has no DTS, if it starts a PES that has one.

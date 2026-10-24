@@ -376,14 +376,13 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 				continue
 			}
 			mux.delivered = true
-			switch {
-			case reb.restart == nil:
+			if reb.restart == nil {
 				s.broadcast(reb.push(out))
-			case reb.ready(append(reb.restart, out...)):
-				s.broadcast(reb.splice(append(reb.restart, out...)))
+				continue
+			}
+			if reb.restart = append(reb.restart, out...); reb.ready(reb.restart) {
+				s.broadcast(reb.splice(reb.restart))
 				reb.restart = nil
-			default:
-				reb.restart = append(reb.restart, out...)
 			}
 		case h := <-s.handover:
 			if mux == nil {
@@ -391,6 +390,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 				up, align = h.up, &tsAligner{dropLead: true}
 				continue
 			}
+			next.abandon("another source was handed over")
 			next = s.startCutover(h)
 		case chunk, open := <-next.input():
 			if !open {
@@ -418,7 +418,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 			mux.stop()
 			next.timer.Stop()
 			up, align, mux = next.h.up, next.align, next.mux
-			mux.delivered = true
+			mux.delivered, reb.restart = true, nil
 			s.broadcast(reb.splice(next.held))
 			next = nil
 		case <-next.expired():

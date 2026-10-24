@@ -19,8 +19,8 @@ WORKDIR /ffmpeg-${FFMPEG_VERSION}
 RUN ./configure --disable-everything --disable-autodetect --disable-network --disable-doc --disable-debug \
         --disable-ffplay --disable-ffprobe --enable-small --disable-shared --enable-static --extra-ldflags=-static \
         --enable-protocol=pipe --enable-demuxer=mpegts --enable-muxer=mpegts \
-        --enable-parser=h264,hevc,aac,aac_latm,ac3,mpegaudio,mpegvideo \
-        --enable-decoder=h264,hevc,aac,aac_latm,ac3,eac3,mp2,mp3,mpeg2video \
+        --enable-parser=h264,hevc,mpegvideo,mpeg4video,vc1,aac,aac_latm,ac3,mpegaudio,dca,opus \
+        --enable-decoder=h264,hevc,mpeg2video,mpeg4,vc1,aac,aac_latm,ac3,eac3,mp2,mp3,dca,opus \
     && make -j"$(nproc)" ffmpeg && strip ffmpeg && cp ffmpeg /ffmpeg
 
 FROM alpine:3.21
