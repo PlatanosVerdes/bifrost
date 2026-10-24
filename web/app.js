@@ -84,6 +84,10 @@ const base = css`
   .tight { color: var(--calm-warn); } .short { color: var(--calm-bad); } .quick { color: var(--calm-ok); }
   h2 { font-size: 14px; color: var(--muted); margin: 26px 0 10px; font-weight: 600; }
   h2.first { margin-top: 0; }
+  .src { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
+  button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
+  button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 `;
 
 // --- switching a playing channel to another of its own sources ------------------------------
@@ -94,10 +98,7 @@ class SourcePicker extends LitElement {
   static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true } };
   static styles = [base, css`
     :host { display: inline; }
-    .src { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
-    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
-    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-    button.src:focus-visible, .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
     .link:hover, .link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
     .ctl { font: inherit; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 0; border-radius: 6px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
@@ -194,10 +195,7 @@ class ChannelGroup extends LitElement {
     .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
     .state.played, .state.warn, .state.live { color: var(--muted); }
     .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
-    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
-    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-    button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .src { color: var(--muted); }
   `];
 
   static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false } };

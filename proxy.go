@@ -688,9 +688,7 @@ func (s *stream) broadcast(chunk []byte) {
 func (s *stream) leave(viewer chan []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.viewers[viewer]; ok {
-		delete(s.viewers, viewer)
-	}
+	delete(s.viewers, viewer)
 	delete(s.direct, viewer)
 	if len(s.viewers) > 0 || s.done || s.idle != nil {
 		return
