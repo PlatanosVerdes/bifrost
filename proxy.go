@@ -66,6 +66,7 @@ type hub struct {
 	ffmpeg  string // remuxes every source when set; empty relays sources raw
 	slate   *slate // played once a channel's sources have all failed; needs ffmpeg
 	loading *slate // played while they are first tried
+	ladder  bool   // a starving channel may step down to its lower versions' sources
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.

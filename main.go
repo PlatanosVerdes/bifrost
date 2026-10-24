@@ -35,6 +35,7 @@ func main() {
 	h.policy.margin = getfloat("SWITCH_MARGIN", h.policy.margin)
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 	h.ffmpeg = findFFmpeg(getenv("FFMPEG", "ffmpeg"))
+	h.ladder = getenv("RESOLUTION_SWITCH", "on") != "off"
 	if h.ffmpeg != "" && getenv("SLATE", "on") != "off" {
 		sl, err := newSlate(offairTS)
 		if err != nil {

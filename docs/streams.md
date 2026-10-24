@@ -98,6 +98,16 @@ Each playing stream in `/api/status` carries:
 | `last_switch` | When, from and to which source, why, and the headroom before and after |
 | `last_probe` | The last probe: when, which source, `switched` or `kept`, why, and both readings |
 
+### Stepping down to a lower version
+
+A channel's 720p and 1080p versions are separate entries with the same guide id. When a channel
+starves and none of its own sources is clearly better, its lower versions' sources (closest first)
+are probed the same way, and the stream steps down to one that keeps up: same broadcast, fewer pixels,
+no stalls. After `5m` stable there, its own sources are probed again and it steps back up only to
+one measuring 1.3x or more, so it does not bounce. Jellyfin shows the TV a short message on each
+step ("Switched to 720p: the 1080p source was too slow", "Back to 1080p"): one call to its sessions
+API, nothing in the video path. Never across channels: only names that differ in the resolution.
+
 ### Picking a source by hand
 
 Sources of one channel can carry different audio. On the page, a playing channel with several

@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -304,13 +305,26 @@ func (s *stream) maybeProbe(w *swarm) {
 		return
 	}
 	_, ids := s.h.table.lookup(s.slug)
+	pool := ids
+	if s.h.ladder {
+		pool = append(slices.Clone(ids), s.h.table.lower(s.slug)...)
+	}
 	now := time.Now()
 
 	s.h.mu.Lock()
 	s.mu.Lock()
-	current := s.source
+	current, switched := s.source, s.lastSwitch
 	s.mu.Unlock()
-	due, _ := s.h.policy.probeDue(now, w.starvingSince(), s.h.lastProbe[s.slug], s.h.probing != "", others(ids, current))
+	stepUp := s.h.ladder && !slices.Contains(ids, current) && w.starvingSince().IsZero() && switched != nil &&
+		now.Sub(switched.At) >= stepUpAfter
+	var due bool
+	if stepUp {
+		pool = ids
+		last := s.h.lastProbe[s.slug]
+		due = s.h.policy.after > 0 && s.h.probing == "" && (last.IsZero() || now.Sub(last) >= s.h.policy.cooldown)
+	} else {
+		due, _ = s.h.policy.probeDue(now, w.starvingSince(), s.h.lastProbe[s.slug], s.h.probing != "", others(pool, current))
+	}
 	if !due {
 		s.h.mu.Unlock()
 		return
@@ -318,7 +332,7 @@ func (s *stream) maybeProbe(w *swarm) {
 	if s.h.probedAt[s.slug] == nil {
 		s.h.probedAt[s.slug] = map[string]time.Time{}
 	}
-	cand := nextCandidate(ids, current, s.h.probedAt[s.slug])
+	cand := nextCandidate(pool, current, s.h.probedAt[s.slug])
 	s.h.probing = s.slug
 	s.h.probedAt[s.slug][cand] = now
 	s.h.mu.Unlock()
@@ -326,12 +340,12 @@ func (s *stream) maybeProbe(w *swarm) {
 	s.mu.Lock()
 	s.probing = cand
 	s.mu.Unlock()
-	go s.probe(s.ctx, cand, current, w)
+	go s.probe(s.ctx, cand, current, w, stepUp)
 }
 
 // probe opens cand next to the playing source, samples it, and either hands it to the relay or
 // closes it. Nothing here touches the playing source.
-func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
+func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, stepUp bool) {
 	p := s.h.policy
 	start := time.Now()
 	before := w.reading(start.Add(-p.after))
@@ -350,8 +364,12 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 		s.mu.Unlock()
 	}()
 
-	log.Printf("[proxy] %s probing %s: %s has starved for %s at %.2fx, %.0f peers", s.label, short(cand), short(current),
-		start.Sub(w.starvingSince()).Round(time.Second), before.Headroom, before.Peers)
+	if stepUp {
+		log.Printf("[proxy] %s probing %s to step back up from %s", s.label, short(cand), short(current))
+	} else {
+		log.Printf("[proxy] %s probing %s: %s has starved for %s at %.2fx, %.0f peers", s.label, short(cand), short(current),
+			start.Sub(w.starvingSince()).Round(time.Second), before.Headroom, before.Peers)
+	}
 	label := s.label + " [probe " + short(cand) + "]"
 	openBy := start.Add(min(s.h.sourceWait, probeOpenWait))
 	// The engine tells players apart by their address unless given a pid, and a player's new
@@ -406,6 +424,13 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 	log.Printf("[swarm] %s probe %s: %.2fx, %.0f peers over %d samples; playing %s: %.2fx, %.0f peers, starving %t",
 		s.label, short(cand), r.Headroom, r.Peers, r.Samples, short(current), before.Headroom, before.Peers, stillStarving)
 	better, reason := p.judge(before, r, stillStarving)
+	if stepUp {
+		better = r.Samples >= 2 && !r.Stalled && r.Headroom >= stepUpHeadroom
+		reason = fmt.Sprintf("its own source keeps up at %.2fx", r.Headroom)
+		if !better {
+			reason = fmt.Sprintf("its own source measured %.2fx, needs %.1fx to step back up", r.Headroom, stepUpHeadroom)
+		}
+	}
 	if !better {
 		keep(reason)
 		return
@@ -485,6 +510,14 @@ func (s *stream) switchTo(old *upstream, h handover) {
 	s.h.mu.Unlock()
 	log.Printf("[proxy] %s switched %s -> %s, headroom %.2fx -> %.2fx: %s", s.label, short(from), short(h.up.id),
 		h.before.Headroom, h.after.Headroom, h.reason)
+	if was, now := s.h.table.heightOf(from), s.h.table.heightOf(h.up.id); was > 0 && now > 0 && was != now {
+		text := fmt.Sprintf("Back to %dp", now)
+		if now < was {
+			text = fmt.Sprintf("Switched to %dp: the %dp source was too slow", now, was)
+		}
+		log.Printf("[proxy] %s %s", s.label, text)
+		go s.h.announce(s.label, text)
+	}
 	if h.up.stat != "" {
 		go s.watchSwarm(h.up.ctx, h.up.stat, nw)
 	}
