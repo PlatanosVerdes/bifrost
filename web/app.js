@@ -217,18 +217,21 @@ class ChannelGroup extends LitElement {
 customElements.define("channel-group", ChannelGroup);
 
 class ChannelBoard extends LitElement {
-  static properties = { channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, query: { state: true } };
+  static properties = { channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, query: { state: true }, first: { state: true } };
   static styles = [base, css`
     .tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
     input { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 8px 12px; width: min(100%, 300px); }
     input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
-    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend button { font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 2px 6px; margin: -2px -6px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .legend button:hover, .legend button:focus-visible { color: var(--ink); }
+    .legend button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .legend button[aria-pressed="true"] { color: var(--ink); background: var(--chip); }
     .groups { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
     .empty { color: var(--muted); font-size: 14px; margin: 0; }
   `];
 
-  constructor() { super(); this.channels = []; this.jellyfin = []; this.query = ""; }
+  constructor() { super(); this.channels = []; this.jellyfin = []; this.query = ""; this.first = null; }
 
   groups() {
     const needle = this.query.trim().toLowerCase();
@@ -239,7 +242,11 @@ class ChannelBoard extends LitElement {
       if (!at.has(group)) { at.set(group, out.length); out.push({ name: group, channels: [] }); }
       out[at.get(group)].channels.push(c);
     }
-    return out;
+    if (!this.first) return out;
+    // Channels in the picked state first, and the groups holding any of them first; the rest keep their order.
+    const picked = (c) => channelState(c, this.jellyfin).tone === this.first;
+    for (const g of out) g.channels.sort((a, b) => picked(b) - picked(a));
+    return out.sort((a, b) => picked(b.channels[0]) - picked(a.channels[0]));
   }
 
   render() {
@@ -247,10 +254,9 @@ class ChannelBoard extends LitElement {
     return html`
       <div class="tools">
         <input type="search" placeholder="Search channels…" aria-label="Search channels" .value=${this.query} @input=${(e) => { this.query = e.target.value; }}>
-        <div class="legend">
-          <span><i class="dot live"></i>Playing</span><span><i class="dot played"></i>Last open played</span>
-          <span><i class="dot warn"></i>Last open left early</span><span><i class="dot bad"></i>Last open failed</span>
-          <span><i class="dot none"></i>Not opened yet</span>
+        <div class="legend" role="group" aria-label="Show first">
+          ${[["live", "Playing"], ["played", "Last open played"], ["warn", "Last open left early"], ["bad", "Last open failed"], ["none", "Not opened yet"]].map(([tone, label]) =>
+            html`<button aria-pressed=${this.first === tone} @click=${() => { this.first = this.first === tone ? null : tone; }}><i class="dot ${tone}"></i>${label}</button>`)}
         </div>
       </div>
       ${groups.length
