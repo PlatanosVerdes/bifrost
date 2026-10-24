@@ -86,21 +86,15 @@ const base = css`
   h2.first { margin-top: 0; }
 `;
 
-// --- one block of channels, scrolling on its own ---------------------------------------------
+// --- switching a playing channel to another of its own sources ------------------------------
 
-class ChannelGroup extends LitElement {
+const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
+
+class SourcePicker extends LitElement {
+  static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true } };
   static styles = [base, css`
-    .card { height: 300px; display: flex; flex-direction: column; }
-    h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
-    h3 span { font-family: var(--font-data); letter-spacing: 0; text-transform: none; font-weight: 500; }
-    ul { list-style: none; margin: 0 0 0 -4px; padding: 0 4px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; }
-    li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-    li:first-child { border-top: 0; }
-    .name { font-weight: 600; font-size: 14px; min-width: 0; }
-    .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
-    .state.played, .state.warn, .state.live { color: var(--muted); }
-    .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
+    :host { display: inline; }
+    .src { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
     button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
     button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
     button.src:focus-visible, .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -124,28 +118,27 @@ class ChannelGroup extends LitElement {
     .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
-  static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, picks: { state: true }, open: { state: true } };
+  show() { this.renderRoot.querySelector("dialog").showModal(); }
 
-  constructor() { super(); this.picks = {}; this.open = null; }
-
-  async pick(c, x) {
-    const set = (v) => { this.picks = { ...this.picks, [c.slug]: v }; };
-    set({ id: x.id });
+  async choose(x) {
+    const c = this.channel;
+    this.pick = { id: x.id };
     try {
       const r = await fetch(`api/channels/${c.slug}/source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: x.id }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Source ${x.n} did not start`);
       await this.reload?.();
-      set({ done: x.n });
-      this.open = null;
-      setTimeout(() => set(null), 4000);
+      this.pick = { done: x.n };
+      this.renderRoot.querySelector("dialog")?.close();
+      setTimeout(() => { this.pick = null; }, 4000);
     } catch (e) {
-      set({ id: x.id, error: e.message });
-      setTimeout(() => set(null), 6000);
+      this.pick = { id: x.id, error: e.message };
+      setTimeout(() => { this.pick = null; }, 6000);
     }
   }
 
   // Numbered in the playlist's order, so a source keeps its number whichever plays.
-  ranked(c) {
+  ranked() {
+    const c = this.channel;
     return (c.sources?.length ? c.sources : c.ids.map((id) => ({ id }))).map((x, i) => ({ ...x, n: i + 1 }))
       .sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
   }
@@ -158,48 +151,62 @@ class ChannelGroup extends LitElement {
     return bits.map((b, i) => html`${i ? " · " : ""}${b}`);
   }
 
-  best(c) {
-    return this.ranked(c).find((x) => x.id !== c.playing.source && x.outcome !== "failed");
+  quick() {
+    const pick = this.pick, next = this.ranked().find((x) => x.id !== this.channel.playing.source && x.outcome !== "failed");
+    if (pick?.id && !pick.error) return html`<span class="muted">switching…</span>`;
+    if (pick?.error) return html`<span class="bad">${pick.error}</span>`;
+    if (pick?.done) return html`<span class="muted">Switched to Source ${pick.done}</span>`;
+    return next ? html`<button class="link" @click=${() => this.choose(next)}>Switch to best</button>` : nothing;
   }
 
-  switchable(c) { return c.ids.length > 1 && c.playing && !c.playing.waiting; }
-
-  quick(c) {
-    if (!this.switchable(c)) return nothing;
-    const pick = this.picks[c.slug], next = this.best(c);
-    if (pick?.id && !pick.error) return html` · <span class="muted">switching…</span>`;
-    if (pick?.error) return html` · <span class="bad">${pick.error}</span>`;
-    if (pick?.done) return html` · <span class="muted">Switched to Source ${pick.done}</span>`;
-    return next ? html` · <button class="link" @click=${() => this.pick(c, next)}>Switch to best</button>` : nothing;
-  }
-
-  count(c) {
-    const n = plural(c.ids.length, "source");
-    return this.switchable(c)
-      ? html`<button class="src" aria-haspopup="dialog" @click=${() => { this.open = c.slug; }}>${n}</button>`
-      : html`<span class="src">${n}</span>`;
-  }
-
-  popup() {
-    const c = this.channels.find((x) => x.slug === this.open);
-    const pick = c && this.picks[c.slug], pending = pick?.id && !pick.error;
-    return html`<dialog aria-label="Sources of ${c?.name ?? ""}" @close=${() => { this.open = null; }} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
-      ${c?.playing ? html`<div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><p>Pick a source for this channel. Everyone watching it switches too.</p>
-        <ul class="panel">${this.ranked(c).map((x, i) => {
+  render() {
+    const c = this.channel;
+    if (!switchable(c)) return nothing;
+    const pick = this.pick, pending = pick?.id && !pick.error;
+    const quick = this.quick();
+    return html`${this.count ? html`<button class="src" aria-haspopup="dialog" @click=${() => this.show()}>${plural(c.ids.length, "source")}</button>` : nothing}${quick === nothing ? nothing : " · "}${quick}
+    <dialog aria-label="Sources of ${c.name}" @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
+      <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><p>Pick a source for this channel. Everyone watching it switches too.</p>
+        <ul class="panel">${this.ranked().map((x, i) => {
           const on = x.id === c.playing.source, mine = pick?.id === x.id;
           return html`<li class="line">
             <span><b>Source ${x.n}</b>${i === 0 && x.headroom != null ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}</span>
             ${on ? html`<span class="tag on">Playing</span>`
-              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.pick(c, x)}>${mine && pending ? "switching…" : "Play"}</button>`}
+              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>`}
             <span class="info">${this.facts(x)}</span></li>`;
-        })}</ul></div>` : nothing}
+        })}</ul></div>
     </dialog>`;
   }
+}
+customElements.define("source-picker", SourcePicker);
 
-  updated() {
-    const d = this.renderRoot.querySelector("dialog");
-    if (this.open && this.channels.some((c) => c.slug === this.open && c.playing) && !d.open) d.showModal();
-    else if (!this.open && d.open) d.close();
+// --- one block of channels, scrolling on its own ---------------------------------------------
+
+class ChannelGroup extends LitElement {
+  static styles = [base, css`
+    .card { height: 300px; display: flex; flex-direction: column; }
+    h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+    h3 span { font-family: var(--font-data); letter-spacing: 0; text-transform: none; font-weight: 500; }
+    ul { list-style: none; margin: 0 0 0 -4px; padding: 0 4px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; }
+    li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+    li:first-child { border-top: 0; }
+    .name { font-weight: 600; font-size: 14px; min-width: 0; }
+    .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+    .state.played, .state.warn, .state.live { color: var(--muted); }
+    .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
+    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
+    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  `];
+
+  static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false } };
+
+  count(c) {
+    const n = plural(c.ids.length, "source");
+    return switchable(c)
+      ? html`<button class="src" aria-haspopup="dialog" @click=${(e) => e.target.closest("li").querySelector("source-picker").show()}>${n}</button>`
+      : html`<span class="src">${n}</span>`;
   }
 
   render() {
@@ -212,10 +219,9 @@ class ChannelGroup extends LitElement {
           <span class="name">${c.name}</span>
           ${this.count(c)}
           ${c.now ? html`<span class="air" title="${c.now.title}, until ${hhmm(c.now.stop)}">${c.now.title} · until ${hhmm(c.now.stop)}</span>` : nothing}
-          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}${this.quick(c)}</span>
+          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}${switchable(c) ? html`<source-picker .channel=${c} .reload=${this.reload}></source-picker>` : nothing}</span>
         </li>`;
       })}</ul>
-      ${this.popup()}
     </section>`;
   }
 }
@@ -270,7 +276,7 @@ customElements.define("channel-board", ChannelBoard);
 // --- the Activity tab: now, recent opens, list and guide ---------------------------------------
 
 class ActivityView extends LitElement {
-  static properties = { status: { attribute: false } };
+  static properties = { status: { attribute: false }, channels: { attribute: false }, reload: { attribute: false } };
   static styles = [base, css`
     .row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; }
     .row > div { min-width: 0; overflow-wrap: anywhere; }
@@ -344,6 +350,7 @@ class ActivityView extends LitElement {
       ${this.swarmFact(st.swarm)}
       <div class="fact"><span class="lbl">Source</span>${this.source(st.source)}
         <span class="sub">since ${hhmm(st.since)}, first video in ${secs(st.started_after_s)}</span>
+        ${switchable(this.channels?.find((c) => c.slug === st.slug)) ? html`<span class="sub"><source-picker count .channel=${this.channels.find((c) => c.slug === st.slug)} .reload=${this.reload}></source-picker></span>` : nothing}
         ${transcoding && jf.reasons ? html`<span class="sub">Jellyfin re-encodes: ${jf.reasons.join(", ")}</span>` : nothing}</div>
     </div>
     </div>`;
@@ -667,7 +674,7 @@ class BifrostApp extends LitElement {
         </div>
       </div>
       ${this.view === "activity"
-        ? html`<activity-view .status=${s}></activity-view>`
+        ? html`<activity-view .status=${s} .channels=${this.channels} .reload=${() => this.refresh()}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
       <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>

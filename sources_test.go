@@ -142,3 +142,23 @@ func TestPickOfADeadSourceKeepsTheStream(t *testing.T) {
 		t.Errorf("the dead source's facts %+v, want it failed", f)
 	}
 }
+
+func TestOrderTriesARecentlyFailedSourceLast(t *testing.T) {
+	h := newHub("http://engine", time.Second, time.Second)
+	ids := []string{"a", "b", "c"}
+	h.noteOutcome("a", "failed")
+	h.mu.Lock()
+	h.lastGood["ch"] = "c"
+	h.mu.Unlock()
+	if got := strings.Join(h.ordered("ch", ids), ""); got != "cba" {
+		t.Errorf("order %q, want the last good first and the failed one last", got)
+	}
+	h.noteSource("a", func(f *sourceFacts) { f.SeenAt = time.Now().Add(-recentlyFailed - time.Minute) })
+	if got := strings.Join(h.ordered("ch", ids), ""); got != "cab" {
+		t.Errorf("order %q, want a failure older than %s forgotten", got, recentlyFailed)
+	}
+	h.noteOutcome("c", "failed")
+	if got := strings.Join(h.ordered("ch", ids), ""); got != "abc" {
+		t.Errorf("order %q, want the last good one tried last once it fails", got)
+	}
+}

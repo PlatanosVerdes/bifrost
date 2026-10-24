@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -287,19 +288,32 @@ func (h *hub) onAir(slug string) (now, next *airing) {
 	return h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 }
 
-// ordered puts the source that last produced video first, as planFor does.
+// recentlyFailed is how long a source that failed to open is tried after the others.
+const recentlyFailed = 15 * time.Minute
+
+// ordered tries the source that last produced video first and one that failed lately last, so a
+// dead first source does not cost every open its whole wait.
 func (h *hub) ordered(slug string, ids []string) []string {
 	h.mu.Lock()
 	good := h.lastGood[slug]
-	h.mu.Unlock()
-	out := make([]string, 0, len(ids))
+	failed := map[string]bool{}
 	for _, id := range ids {
-		if id == good {
-			out = append([]string{id}, out...)
-		} else {
-			out = append(out, id)
+		if f := h.facts[id]; f != nil && f.Outcome == "failed" && time.Since(f.SeenAt) < recentlyFailed {
+			failed[id] = true
 		}
 	}
+	h.mu.Unlock()
+	rank := func(id string) int {
+		switch {
+		case failed[id]:
+			return 2
+		case id == good:
+			return 0
+		}
+		return 1
+	}
+	out := slices.Clone(ids)
+	slices.SortStableFunc(out, func(a, b string) int { return rank(a) - rank(b) })
 	return out
 }
 
