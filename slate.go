@@ -11,6 +11,11 @@ import (
 //go:embed slate/offair.ts
 var offairTS []byte
 
+// Made by slate/loading.py: what a channel shows while its sources are first tried.
+//
+//go:embed slate/loading.ts
+var loadingTS []byte
+
 const (
 	slateTick = 100 * time.Millisecond
 	slateLead = 2 * time.Second // sent at once, so a player starts without waiting
@@ -68,6 +73,7 @@ func newSlate(b []byte) (*slate, error) {
 
 type slatePlayer struct {
 	sl      *slate
+	lead    time.Duration
 	pos     int
 	started time.Time
 	sent    int64
@@ -78,7 +84,7 @@ func (p *slatePlayer) next(now time.Time) ([]byte, bool) {
 		p.started = now
 	}
 	rate := float64(len(p.sl.loop)) / p.sl.duration.Seconds()
-	due := int64(rate*(now.Sub(p.started)+slateLead).Seconds()) - p.sent
+	due := int64(rate*(now.Sub(p.started)+p.lead).Seconds()) - p.sent
 	if due < tsPacket {
 		return nil, false
 	}
