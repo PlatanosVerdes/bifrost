@@ -63,6 +63,7 @@ type streamStatus struct {
 	Probing       bool          `json:"probing"`
 	ProbingSource string        `json:"probing_source,omitempty"`
 	Switches      int           `json:"switches"`
+	Waiting       bool          `json:"waiting,omitempty"` // on the slate, no source has delivered yet
 	LastSwitch    *switchRecord `json:"last_switch,omitempty"`
 	LastProbe     *probeRecord  `json:"last_probe,omitempty"`
 
@@ -198,7 +199,7 @@ func (h *hub) streamsNow() []streamStatus {
 	for _, s := range streams {
 		s.mu.Lock()
 		if !s.done && s.ok {
-			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source,
+			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source, Waiting: s.source == "",
 				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
 				Probing: s.probing != "", ProbingSource: s.probing, Switches: s.switches, LastSwitch: s.lastSwitch,
 				LastProbe: s.lastProbe, channelSwitches: switches[s.slug], remuxRestarts: restarts[s.slug]})

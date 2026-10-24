@@ -170,16 +170,22 @@ const (
 type tsRebaser struct {
 	restart []byte // a new run of the same source, held until it can be spliced; nil when none
 	offset  int64
+	start   int64            // the new run's start, which cut drops each PID's packets up to
+	cutting map[uint16]bool  // PIDs whose packets cut drops now
+	pending map[uint16]bool  // PIDs that have not reached start yet; nil when nothing is cut
 	cc      map[uint16]byte  // next continuity counter per PID
 	last    map[uint16]int64 // last DTS (or PTS) written per PID, after the offset
-	pmts    map[uint16]bool  // PMT PIDs, from the PAT
+	// The last spacing between PES starts per PID: an audio PES holds several frames, so a run
+	// carries on that far after the last PES start, not one frame.
+	gap  map[uint16]int64
+	pmts map[uint16]bool // PMT PIDs, from the PAT
 	// Every ffmpeg run writes PMT version 0, so a changed PMT gets the next one or the player ignores it.
 	pmtBody    map[uint16]string
 	pmtVersion map[uint16]byte
 }
 
 func newRebaser() *tsRebaser {
-	return &tsRebaser{cc: map[uint16]byte{}, last: map[uint16]int64{}, pmts: map[uint16]bool{},
+	return &tsRebaser{cc: map[uint16]byte{}, last: map[uint16]int64{}, gap: map[uint16]int64{}, pmts: map[uint16]bool{},
 		pmtBody: map[uint16]string{}, pmtVersion: map[uint16]byte{}}
 }
 
@@ -198,11 +204,12 @@ func (t *tsRebaser) ready(b []byte) bool {
 	return true
 }
 
-// ffmpeg starts video at a keyframe but audio straight away: audio before the keyframe is dropped.
+// ffmpeg starts video at a keyframe but audio straight away: audio before the keyframe is dropped,
+// until each PID reaches it, since some of it comes after the keyframe in the stream.
 func (t *tsRebaser) splice(b []byte) []byte {
 	first := firstTimestamps(b)
 	start, common := int64(0), false
-	for pid, f := range first {
+	for pid, f := range firstPTS(b) {
 		if _, ok := t.last[pid]; ok && (!common || wrapDiff(f, start) > 0) {
 			start, common = f, true
 		}
@@ -210,28 +217,81 @@ func (t *tsRebaser) splice(b []byte) []byte {
 	if !common {
 		return t.push(b)
 	}
-	kept := make([]byte, 0, len(b))
-	dropping := map[uint16]bool{}
-	for i := 0; i+tsPacket <= len(b); i += tsPacket {
-		p := b[i : i+tsPacket]
-		pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
-		if _, ts, ok := pesTimestamp(p); ok {
-			dropping[pid] = wrapDiff(ts, start) < 0
-		}
-		if !dropping[pid] {
-			kept = append(kept, p...)
+	t.start, t.cutting, t.pending = start, map[uint16]bool{}, map[uint16]bool{}
+	for pid := range first {
+		if _, ok := t.last[pid]; ok {
+			t.pending[pid] = true
 		}
 	}
+	kept := t.cut(b)
+	keptFirst := firstTimestamps(kept)
 	shift, found := int64(0), false
-	for pid, f := range firstTimestamps(kept) {
-		if last, ok := t.last[pid]; ok {
-			if d := wrapDiff(last, f) + spliceStep; !found || d > shift {
-				shift, found = d, true
-			}
+	for pid := range first {
+		last, ok := t.last[pid]
+		if !ok {
+			continue
+		}
+		f, seen := keptFirst[pid]
+		if !seen {
+			f = start
+		}
+		step := t.gap[pid]
+		if step == 0 {
+			step = spliceStep
+		}
+		if d := wrapDiff(last, f) + step; !found || d > shift {
+			shift, found = d, true
 		}
 	}
 	t.offset = shift
-	return t.push(kept)
+	t.rewriteAll(kept)
+	return kept
+}
+
+// For a run that begins exactly where the last one ended.
+func (t *tsRebaser) advance(ticks int64, b []byte) []byte {
+	t.offset += ticks
+	return t.push(b)
+}
+
+func (t *tsRebaser) cut(b []byte) []byte {
+	if t.pending == nil {
+		return b
+	}
+	kept := make([]byte, 0, len(b))
+	for i := 0; i+tsPacket <= len(b); i += tsPacket {
+		p := b[i : i+tsPacket]
+		pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
+		if _, pts, _, ok := pesTimes(p); ok && t.pending[pid] || t.cutting[pid] {
+			if ok {
+				t.cutting[pid] = wrapDiff(pts, t.start) < 0
+				if !t.cutting[pid] {
+					delete(t.pending, pid)
+				}
+			}
+		}
+		if !t.cutting[pid] {
+			kept = append(kept, p...)
+		}
+	}
+	if len(t.pending) == 0 {
+		t.pending, t.cutting = nil, nil
+	}
+	return kept
+}
+
+func firstPTS(b []byte) map[uint16]int64 {
+	first := map[uint16]int64{}
+	for i := 0; i+tsPacket <= len(b); i += tsPacket {
+		pid, pts, _, ok := pesTimes(b[i : i+tsPacket])
+		if !ok {
+			continue
+		}
+		if f, seen := first[pid]; !seen || wrapDiff(pts, f) < 0 {
+			first[pid] = pts
+		}
+	}
+	return first
 }
 
 func firstTimestamps(b []byte) map[uint16]int64 {
@@ -249,10 +309,15 @@ func firstTimestamps(b []byte) map[uint16]int64 {
 }
 
 func (t *tsRebaser) push(b []byte) []byte {
+	b = t.cut(b)
+	t.rewriteAll(b)
+	return b
+}
+
+func (t *tsRebaser) rewriteAll(b []byte) {
 	for i := 0; i+tsPacket <= len(b); i += tsPacket {
 		t.rewrite(b[i : i+tsPacket])
 	}
-	return b
 }
 
 func (t *tsRebaser) rewrite(p []byte) {
@@ -302,6 +367,11 @@ func (t *tsRebaser) rewrite(p []byte) {
 		dts := wrap(readTS(pes[14:19]) + t.offset)
 		writeTS(pes[14:19], dts)
 		last = dts
+	}
+	if prev, ok := t.last[pid]; ok {
+		if d := wrapDiff(last, prev); d > 0 && d < 90000 {
+			t.gap[pid] = d
+		}
 	}
 	t.last[pid] = last
 }
@@ -368,29 +438,35 @@ func crc32MPEG(b []byte) uint32 {
 }
 
 func pesTimestamp(p []byte) (uint16, int64, bool) {
+	pid, _, dts, ok := pesTimes(p)
+	return pid, dts, ok
+}
+
+func pesTimes(p []byte) (pid uint16, pts, dts int64, ok bool) {
 	if p[0] != tsSync || p[1]&0x40 == 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
+	pid = uint16(p[1]&0x1f)<<8 | uint16(p[2])
 	afc := p[3] >> 4 & 3
 	payload := 4
 	if afc&2 != 0 {
 		payload = 5 + int(p[4])
 	}
 	if afc&1 == 0 || payload+19 > tsPacket {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	pes := p[payload:]
 	if pes[0] != 0 || pes[1] != 0 || pes[2] != 1 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	switch pes[7] >> 6 {
 	case 2:
-		return pid, readTS(pes[9:14]), true
+		pts = readTS(pes[9:14])
+		return pid, pts, pts, true
 	case 3:
-		return pid, readTS(pes[14:19]), true
+		return pid, readTS(pes[9:14]), readTS(pes[14:19]), true
 	}
-	return 0, 0, false
+	return 0, 0, 0, false
 }
 
 func readTS(b []byte) int64 {

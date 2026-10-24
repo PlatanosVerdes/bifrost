@@ -35,6 +35,13 @@ func main() {
 	h.policy.margin = getfloat("SWITCH_MARGIN", h.policy.margin)
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 	h.ffmpeg = findFFmpeg(getenv("FFMPEG", "ffmpeg"))
+	if h.ffmpeg != "" && getenv("SLATE", "on") != "off" {
+		sl, err := newSlate(offairTS)
+		if err != nil {
+			log.Fatalf("the embedded slate: %v", err)
+		}
+		h.slate = sl
+	}
 
 	if after := getduration("ORPHAN_AFTER", 15*time.Minute); after > 0 && h.jellyfinURL != "" {
 		go h.closeOrphans(time.Minute, after)
