@@ -59,7 +59,9 @@ type hub struct {
 	lastProbe map[string]time.Time            // slug -> when its last probe ended
 	probedAt  map[string]map[string]time.Time // slug -> content id -> when it was last probed
 	switches  map[string]int                  // slug -> source switches since bifrost started
-	probes    atomic.Int64
+	// slug -> ffmpeg runs restarted since bifrost started (stuck, or ended under a playing source)
+	remuxRestarts map[string]int
+	probes        atomic.Int64
 
 	ffmpeg string // remuxes every source when set; empty relays sources raw
 }
@@ -110,7 +112,7 @@ func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
 		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
 		schedule: &schedule{}, swarmEvery: 5 * time.Second, policy: defaultPolicy, lastProbe: map[string]time.Time{},
-		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}}
+		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{}}
 }
 
 // The engine answers its redirects with no length and keeps the connection open, so a redirect on
@@ -365,6 +367,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 		case <-stuck.C:
 			if mux.stuckFor() > remuxStuckAfter {
 				log.Printf("[proxy] %s remux took nothing for %s, restarting it", s.label, remuxStuckAfter)
+				s.remuxRestarted()
 				mux.stop()
 				mux, reb.restart = s.remux(ctx, up), []byte{}
 			}
@@ -381,6 +384,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 					mux = nil
 				default:
 					log.Printf("[proxy] %s remux ended, restarting it", s.label)
+					s.remuxRestarted()
 					mux, reb.restart = s.remux(ctx, up), []byte{}
 				}
 				continue
@@ -452,6 +456,12 @@ func (s *stream) remux(ctx context.Context, up *upstream) *remux {
 		return nil
 	}
 	return r
+}
+
+func (s *stream) remuxRestarted() {
+	s.h.mu.Lock()
+	s.h.remuxRestarts[s.slug]++
+	s.h.mu.Unlock()
 }
 
 // output is nil for a raw stream, so the relay's select never picks it.

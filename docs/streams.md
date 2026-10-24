@@ -32,7 +32,8 @@ log says when a channel starts and stops starving. The same numbers are pushed p
 under their own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each
 other: `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`,
 `_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving`,
-`_stalls_total` and `_source_switches_total` (since bifrost started), all labelled `channel="<slug>"`. A dashboard that filters on
+`_stalls_total`, `_source_switches_total` and `_remux_restarts_total` (since bifrost started), all
+labelled `channel="<slug>"`. A dashboard that filters on
 `job="acestream_updater"` has to take in `acestream_streams` too to see them. A channel nobody
 watches any more drops out of the group.
 
@@ -85,8 +86,9 @@ better source of its channel, under rules meant never to leave them with nothing
 
 The log says each step: `probing <id>` with the playing source's numbers, `[swarm] … probe <id>:
 1.85x, 24 peers over 3 samples; playing <id>: 0.71x`, and then `switched <old> -> <new>, headroom
-0.71x -> 1.85x` or `kept <id>: probe <id> not clearly better…`. Each playing stream in
-`/api/status` carries:
+0.71x -> 1.85x` or `kept <id>: probe <id> not clearly better…`. The page leaves switches out,
+since a viewer only sees the picture jump; the log and the metrics above carry them to Grafana.
+Each playing stream in `/api/status` carries:
 
 | Field | What it is |
 | :--- | :--- |
