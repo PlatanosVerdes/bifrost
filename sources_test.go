@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,24 @@ func TestOrderTriesARecentlyFailedSourceLast(t *testing.T) {
 	h.noteOutcome("c", "failed")
 	if got := strings.Join(h.ordered("ch", ids), ""); got != "abc" {
 		t.Errorf("order %q, want the last good one tried last once it fails", got)
+	}
+}
+
+func TestSourceFactsSurviveARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sources.json")
+	before := newHub("http://engine", time.Second, time.Second)
+	before.noteOutcome("dead", "failed")
+	before.noteSource("old", func(f *sourceFacts) { f.Outcome, f.SeenAt = "played", time.Now().Add(-factsKept-time.Hour) })
+	if err := before.saveFacts(path); err != nil {
+		t.Fatal(err)
+	}
+
+	after := newHub("http://engine", time.Second, time.Second)
+	after.loadFacts(path)
+	if got := strings.Join(after.ordered("ch", []string{"dead", "live"}), ","); got != "live,dead" {
+		t.Errorf("after a restart the order is %q, want the source that failed lately last", got)
+	}
+	if f := after.sourcesOf([]string{"old"})[0]; f.Outcome != "" {
+		t.Errorf("a source unseen for over %s came back as %+v", factsKept, f)
 	}
 }

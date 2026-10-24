@@ -31,6 +31,9 @@ func main() {
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 	h.ffmpeg = findFFmpeg(getenv("FFMPEG", "ffmpeg"))
 	h.ladder = getenv("RESOLUTION_SWITCH", "on") != "off"
+	factsFile := filepath.Join(cfg.stateDir, "sources.json")
+	h.loadFacts(factsFile)
+	go h.keepFacts(factsFile, 30*time.Second)
 	if h.ffmpeg != "" && getenv("SLATE", "on") != "off" {
 		sl, err := newSlate(offairTS)
 		if err != nil {

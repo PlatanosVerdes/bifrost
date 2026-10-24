@@ -6,6 +6,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -34,6 +35,60 @@ func (h *hub) noteSource(id string, change func(*sourceFacts)) {
 		h.facts[id] = f
 	}
 	change(f)
+	h.factsDirty = true
+}
+
+// Kept on disk so a restart does not forget a dead source; a week unseen is forgotten.
+const factsKept = 7 * 24 * time.Hour
+
+func (h *hub) loadFacts(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var list []sourceFacts
+	if json.Unmarshal(b, &list) != nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, f := range list {
+		if time.Since(f.SeenAt) < factsKept {
+			h.facts[f.ID] = &f
+		}
+	}
+}
+
+func (h *hub) saveFacts(path string) error {
+	h.mu.Lock()
+	if !h.factsDirty {
+		h.mu.Unlock()
+		return nil
+	}
+	list := make([]sourceFacts, 0, len(h.facts))
+	for id, f := range h.facts {
+		if time.Since(f.SeenAt) >= factsKept {
+			delete(h.facts, id)
+			continue
+		}
+		list = append(list, *f)
+	}
+	h.factsDirty = false
+	h.mu.Unlock()
+	b, _ := json.Marshal(list)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (h *hub) keepFacts(path string, every time.Duration) {
+	for range time.Tick(every) {
+		if err := h.saveFacts(path); err != nil {
+			log.Printf("warning: saving source facts: %v", err)
+		}
+	}
 }
 
 func (h *hub) noteOutcome(id, outcome string) {
