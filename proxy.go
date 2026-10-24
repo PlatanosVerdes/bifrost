@@ -64,6 +64,7 @@ type hub struct {
 	probes        atomic.Int64
 
 	ffmpeg string // remuxes every source when set; empty relays sources raw
+	slate  *slate // played while a channel has no video; needs ffmpeg
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -270,11 +271,29 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	defer s.finish()
 	start := time.Now()
-	deadline := start.Add(p.budget)
+	if s.h.slate != nil && s.h.ffmpeg != "" {
+		s.runSlate(ctx, p, headers, start)
+		return
+	}
+	src, ok := s.findSource(ctx, p, headers)
+	if !ok {
+		s.gaveUp(ctx, start)
+		close(s.ready)
+		return
+	}
+	s.ok, s.header = true, src.header
+	close(s.ready)
+	s.started(src, start)
+	s.relay(ctx, src.up, start)
+}
 
-	var resp *http.Response
-	var first []byte
-	var chosen string
+type found struct {
+	up     *upstream
+	header http.Header
+}
+
+func (s *stream) findSource(ctx context.Context, p plan, headers http.Header) (found, bool) {
+	deadline := time.Now().Add(p.budget)
 	for i, id := range p.sources {
 		if ctx.Err() != nil || !time.Now().Before(deadline) {
 			break
@@ -306,46 +325,152 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 			}
 			continue
 		}
-		resp, first, chosen = r, b, id
 		s.h.noteOutcome(id, "played")
 		if p.slug != "" {
 			s.h.mu.Lock()
 			s.h.lastGood[p.slug] = id
 			s.h.mu.Unlock()
 		}
-		break
+		return found{up: feed(ctx, id, r, b), header: r.Header.Clone()}, true
 	}
-	if resp == nil {
-		outcome := "abandoned"
-		if ctx.Err() == nil {
-			outcome = "gave_up"
-			log.Printf("[proxy] %s gave up, no source produced video in %s", s.label, time.Since(start).Round(time.Second))
-		}
-		s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, At: start, Outcome: outcome, Seconds: tenths(time.Since(start))})
-		close(s.ready)
-		return
+	return found{}, false
+}
+
+func (s *stream) gaveUp(ctx context.Context, start time.Time) {
+	outcome := "abandoned"
+	if ctx.Err() == nil {
+		outcome = "gave_up"
+		log.Printf("[proxy] %s gave up, no source produced video in %s", s.label, time.Since(start).Round(time.Second))
 	}
+	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, At: start, Outcome: outcome, Seconds: tenths(time.Since(start))})
+}
+
+func (s *stream) started(src found, start time.Time) {
 	log.Printf("[proxy] %s playing after %.1fs", s.label, tenths(time.Since(start)))
 	s.mu.Lock()
-	s.source, s.playingSince, s.startedAfterS = chosen, time.Now(), tenths(time.Since(start))
+	s.source, s.playingSince, s.startedAfterS = src.up.id, time.Now(), tenths(time.Since(start))
 	s.mu.Unlock()
-	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, Source: short(chosen), At: start, Outcome: "playing", Seconds: s.startedAfterS})
+	s.h.status.opened(openRecord{Channel: s.label, Slug: s.slug, Source: short(src.up.id), At: start, Outcome: "playing", Seconds: s.startedAfterS})
 	go s.h.noteDevice(start, s.label)
-	s.ok, s.header = true, resp.Header.Clone()
-	close(s.ready)
-	up := feed(ctx, chosen, resp, first)
-	if up.stat != "" {
-		go s.watchSwarm(up.ctx, up.stat, s.swarm)
+	if src.up.stat != "" {
+		go s.watchSwarm(src.up.ctx, src.up.stat, s.swarm)
 	}
-	s.relay(ctx, up, start)
+}
+
+// Keeps looking every slateRetry while someone watches; the first source to deliver takes over.
+func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, start time.Time) {
+	s.ok, s.header = true, http.Header{"Content-Type": {"video/mp2t"}}
+	s.mu.Lock()
+	s.playingSince = start
+	s.mu.Unlock()
+	close(s.ready)
+	log.Printf("[proxy] %s playing the slate while it looks for video", s.label)
+	reb := newRebaser()
+	player := &slatePlayer{sl: s.h.slate}
+	tick := time.NewTicker(slateTick)
+	defer tick.Stop()
+	results := make(chan *found, 1)
+	search := func() {
+		go func() {
+			if src, ok := s.findSource(ctx, p, headers); ok {
+				results <- &src
+			} else {
+				results <- nil
+			}
+		}()
+	}
+	search()
+	var retry <-chan time.Time
+	var next *cutover
+	var src *found
+	gaveUp := false
+	fail := func(reason string) {
+		log.Printf("[proxy] %s %s, back to the slate", s.label, reason)
+		next.timer.Stop()
+		next.mux.stop()
+		src.up.cancel()
+		next, src, retry = nil, nil, time.After(slateRetry)
+	}
+	for {
+		select {
+		case now := <-tick.C:
+			if b, fresh := player.next(now); len(b) > 0 {
+				if fresh && player.sent > int64(len(b)) {
+					s.broadcast(reb.advance(player.sl.ticks, b))
+				} else {
+					s.broadcast(reb.push(b))
+				}
+			}
+		case r := <-results:
+			if r == nil {
+				if !gaveUp && ctx.Err() == nil {
+					s.gaveUp(ctx, start)
+					log.Printf("[proxy] %s keeps the slate, looking again every %s", s.label, slateRetry)
+					gaveUp = true
+				}
+				retry = time.After(slateRetry)
+				continue
+			}
+			mux := s.remux(r.up.ctx, r.up)
+			if mux == nil {
+				r.up.cancel()
+				retry = time.After(slateRetry)
+				continue
+			}
+			src = r
+			next = &cutover{mux: mux, align: &tsAligner{dropLead: true}, timer: time.NewTimer(remuxStartWait)}
+		case <-retry:
+			retry = nil
+			search()
+		case chunk, open := <-next.feedFrom(src):
+			if !open {
+				fail("the source ended before its remux delivered")
+				continue
+			}
+			if out := next.align.push(chunk); len(out) > 0 {
+				s.relayed.Add(int64(len(out)))
+				next.mux.write(out)
+			}
+		case out, open := <-next.output():
+			if !open {
+				fail("its remux ended before it delivered")
+				continue
+			}
+			if next.held = append(next.held, out...); !reb.ready(next.held) {
+				continue
+			}
+			next.timer.Stop()
+			next.mux.delivered = true
+			s.started(*src, start)
+			s.broadcast(reb.splice(next.held))
+			s.relayFrom(ctx, src.up, start, next.align, reb, next.mux)
+			return
+		case <-next.expired():
+			fail("its remux delivered nothing in " + remuxStartWait.String())
+		case <-ctx.Done():
+			if next != nil {
+				next.mux.stop()
+				src.up.cancel()
+			}
+			return
+		}
+	}
+}
+
+func (c *cutover) feedFrom(src *found) <-chan []byte {
+	if c == nil {
+		return nil
+	}
+	return c.mux.feed(src.up.chunks)
 }
 
 // relay hands the source's chunks to the viewers, packet-aligned, until a probe hands over a better
 // source: from then on the same viewers get that one, and the old session is closed.
 func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
-	align := &tsAligner{}
-	reb := newRebaser()
-	mux := s.remux(ctx, up)
+	s.relayFrom(ctx, up, start, &tsAligner{}, newRebaser(), s.remux(ctx, up))
+}
+
+func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, align *tsAligner, reb *tsRebaser, mux *remux) {
 	var next *cutover
 	stuck := time.NewTicker(time.Second)
 	defer stuck.Stop()
