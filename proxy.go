@@ -54,12 +54,15 @@ type hub struct {
 	schedule                 *schedule
 	swarmEvery               time.Duration
 
-	policy    switchPolicy
-	probing   string                          // the slug probing another source: one probe at a time, Pi-wide
-	lastProbe map[string]time.Time            // slug -> when its last probe ended
-	probedAt  map[string]map[string]time.Time // slug -> content id -> when it was last probed
-	switches  map[string]int                  // slug -> source switches since bifrost started
-	probes    atomic.Int64
+	policy        switchPolicy
+	probing       string                          // the slug probing another source: one probe at a time, Pi-wide
+	lastProbe     map[string]time.Time            // slug -> when its last probe ended
+	probedAt      map[string]map[string]time.Time // slug -> content id -> when it was last probed
+	switches      map[string]int                  // slug -> source switches since bifrost started
+	remuxRestarts map[string]int
+	probes        atomic.Int64
+
+	ffmpeg string // remuxes every source when set; empty relays sources raw
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -108,7 +111,7 @@ func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
 		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
 		schedule: &schedule{}, swarmEvery: 5 * time.Second, policy: defaultPolicy, lastProbe: map[string]time.Time{},
-		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}}
+		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{}}
 }
 
 // The engine answers its redirects with no length and keeps the connection open, so a redirect on
@@ -332,28 +335,186 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 // source: from then on the same viewers get that one, and the old session is closed.
 func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 	align := &tsAligner{}
+	reb := newRebaser()
+	mux := s.remux(ctx, up)
+	var next *cutover
+	stuck := time.NewTicker(time.Second)
+	defer stuck.Stop()
 	for {
 		select {
-		case chunk, open := <-up.chunks:
+		case chunk, open := <-mux.feed(up.chunks):
 			if !open {
 				if ctx.Err() == nil {
 					log.Printf("[proxy] %s engine stream ended after %s: %v", s.label, time.Since(start).Round(time.Second), up.err)
 				}
 				up.cancel()
+				mux.stop()
+				next.abandon("the playing source ended")
 				return
 			}
-			if out := align.push(chunk); len(out) > 0 {
-				s.broadcast(out)
-				s.relayed.Add(int64(len(out)))
+			out := align.push(chunk)
+			if len(out) == 0 {
+				continue
 			}
-		case next := <-s.handover:
-			s.switchTo(up, next)
-			up, align = next.up, &tsAligner{dropLead: true}
+			s.relayed.Add(int64(len(out)))
+			if mux == nil {
+				s.broadcast(out)
+			} else {
+				mux.write(out)
+			}
+		case <-stuck.C:
+			if mux.stuckFor() > remuxStuckAfter {
+				log.Printf("[proxy] %s remux took nothing for %s, restarting it", s.label, remuxStuckAfter)
+				s.remuxRestarted()
+				mux.stop()
+				mux, reb.restart = s.remux(ctx, up), []byte{}
+			}
+			if next != nil && next.mux.stuckFor() > remuxStuckAfter {
+				next.abandon("its remux took nothing for " + remuxStuckAfter.String())
+				next = nil
+			}
+		case out, open := <-mux.output():
+			if !open {
+				switch {
+				case ctx.Err() != nil:
+				case !mux.delivered:
+					log.Printf("[proxy] %s plays raw, its remux delivered nothing", s.label)
+					mux = nil
+				default:
+					log.Printf("[proxy] %s remux ended, restarting it", s.label)
+					s.remuxRestarted()
+					mux, reb.restart = s.remux(ctx, up), []byte{}
+				}
+				continue
+			}
+			mux.delivered = true
+			if reb.restart == nil {
+				s.broadcast(reb.push(out))
+				continue
+			}
+			if reb.restart = append(reb.restart, out...); reb.ready(reb.restart) {
+				s.broadcast(reb.splice(reb.restart))
+				reb.restart = nil
+			}
+		case h := <-s.handover:
+			if mux == nil {
+				s.switchTo(up, h)
+				up, align = h.up, &tsAligner{dropLead: true}
+				continue
+			}
+			next.abandon("another source was handed over")
+			next = s.startCutover(h)
+		case chunk, open := <-next.input():
+			if !open {
+				next.abandon("the new source ended before its remux delivered")
+				next = nil
+				continue
+			}
+			if out := next.align.push(chunk); len(out) > 0 {
+				next.h.drained += int64(len(out))
+				next.mux.write(out)
+			}
+		case out, open := <-next.output():
+			if !open {
+				next.abandon("its remux ended before it delivered")
+				next = nil
+				continue
+			}
+			if next.held = append(next.held, out...); !reb.ready(next.held) {
+				continue
+			}
+			s.switchTo(up, next.h)
+			mux.stop()
+			next.timer.Stop()
+			up, align, mux = next.h.up, next.align, next.mux
+			mux.delivered, reb.restart = true, nil
+			s.broadcast(reb.splice(next.held))
+			next = nil
+		case <-next.expired():
+			next.abandon("its remux delivered nothing in " + remuxStartWait.String())
+			next = nil
 		case <-ctx.Done():
 			up.cancel()
+			mux.stop()
+			next.abandon("the stream closed")
 			return
 		}
 	}
+}
+
+// nil relays the source raw, as before remuxing.
+func (s *stream) remux(ctx context.Context, up *upstream) *remux {
+	if s.h.ffmpeg == "" {
+		return nil
+	}
+	r, err := startRemux(ctx, s.h.ffmpeg, s.label+" ["+short(up.id)+"]")
+	if err != nil {
+		log.Printf("[proxy] %s plays raw, ffmpeg did not start: %v", s.label, err)
+		return nil
+	}
+	return r
+}
+
+func (s *stream) remuxRestarted() {
+	s.h.mu.Lock()
+	s.h.remuxRestarts[s.slug]++
+	s.h.mu.Unlock()
+}
+
+func (r *remux) output() <-chan []byte {
+	if r == nil {
+		return nil
+	}
+	return r.out
+}
+
+// The playing source keeps playing until the handed-over one's remux delivers.
+type cutover struct {
+	h     handover
+	mux   *remux
+	align *tsAligner
+	timer *time.Timer
+	held  []byte // its output so far, played once it can be spliced
+}
+
+func (s *stream) startCutover(h handover) *cutover {
+	c := &cutover{h: h, align: &tsAligner{dropLead: true}, timer: time.NewTimer(remuxStartWait)}
+	if c.mux = s.remux(h.up.ctx, h.up); c.mux == nil {
+		c.abandon("ffmpeg did not start")
+		return nil
+	}
+	return c
+}
+
+func (c *cutover) input() <-chan []byte {
+	if c == nil {
+		return nil
+	}
+	return c.mux.feed(c.h.up.chunks)
+}
+
+func (c *cutover) output() <-chan []byte {
+	if c == nil {
+		return nil
+	}
+	return c.mux.out
+}
+
+func (c *cutover) expired() <-chan time.Time {
+	if c == nil {
+		return nil
+	}
+	return c.timer.C
+}
+
+func (c *cutover) abandon(reason string) {
+	if c == nil {
+		return
+	}
+	c.timer.Stop()
+	c.mux.stop()
+	c.h.up.cancel()
+	c.h.outcome <- reason
 }
 
 // broadcast never blocks on a viewer: one that fell a whole backlog behind is dropped, so a stalled

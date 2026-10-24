@@ -32,7 +32,8 @@ log says when a channel starts and stops starving. The same numbers are pushed p
 under their own job, `acestream_streams`, so the list loop's PUT and this one do not wipe each
 other: `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`,
 `_upload_bytes_per_second`, `_bitrate_bytes_per_second`, `_headroom`, `_starving`,
-`_stalls_total` and `_source_switches_total` (since bifrost started), all labelled `channel="<slug>"`. A dashboard that filters on
+`_stalls_total`, `_source_switches_total` and `_remux_restarts_total` (since bifrost started), all
+labelled `channel="<slug>"`. A dashboard that filters on
 `job="acestream_updater"` has to take in `acestream_streams` too to see them. A channel nobody
 watches any more drops out of the group.
 
@@ -67,18 +68,27 @@ better source of its channel, under rules meant never to leave them with nothing
   stalled in its last sample, gave fewer than two usable samples, or a playing source that
   recovered meanwhile and keeps up on average, keeps the stream where it is. One that only
   recovered between two starves (0.85x on average) does not count as recovered.
-- **The playing source is not touched until the new one delivers.** The candidate takes over
-  between two chunks: the viewers stay connected and get the new source's packets from its first
-  TS sync on. The relay hands out whole 188-byte packets, so the cut never falls inside one. The
-  picture jumps (another source is at another point of the match), which beats a stall. Only then
-  is the old session closed, and the new source becomes the channel's last good one.
+- **The playing source is not touched until the new one delivers.** Each source has its own
+  clock, PIDs and GOP, and splicing a new one in raw froze the Samsung TV on its first switch. So
+  every source runs through its own `ffmpeg -c copy`, which starts at the first keyframe and always
+  writes the same PIDs, and a handed-over source is remuxed next to the playing one, which keeps
+  playing until the new remux has delivered a timestamp for every track. Then bifrost shifts the
+  new run's timestamps and continuity counters to carry on right after the old run's, drops the
+  audio from before the new keyframe, and gives a PMT that changed (other codecs or tracks) the
+  next version, so the player sees one stream. The picture jumps (another source is at another
+  point of the match) but does not stall, and the delay to live does not grow. A remux that never
+  delivers within 15 s keeps the old source. Only then is the old session closed, and the new
+  source becomes the channel's last good one. The remux costs ~0.6% of a Pi 4 core and ~8 MB per
+  stream; without ffmpeg (`FFMPEG=off`, or not found) sources are relayed raw, packet-aligned, as
+  before.
 - **A probe that fails changes nothing.** One that never opens, sends no video, ends, or is not
   better is closed, and the reason is logged and kept in the stream's `last_probe`.
 
 The log says each step: `probing <id>` with the playing source's numbers, `[swarm] … probe <id>:
 1.85x, 24 peers over 3 samples; playing <id>: 0.71x`, and then `switched <old> -> <new>, headroom
-0.71x -> 1.85x` or `kept <id>: probe <id> not clearly better…`. Each playing stream in
-`/api/status` carries:
+0.71x -> 1.85x` or `kept <id>: probe <id> not clearly better…`. The page leaves switches out,
+since a viewer only sees the picture jump; the log and the metrics above carry them to Grafana.
+Each playing stream in `/api/status` carries:
 
 | Field | What it is |
 | :--- | :--- |
