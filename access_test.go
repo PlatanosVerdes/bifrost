@@ -406,7 +406,7 @@ func TestCloudflareAPIErrorsAreReported(t *testing.T) {
 	a := f.access("boss@example.com")
 	a.provider.(*cloudflareAccess).token = "wrong"
 	code, got, _ := get(t, a, f.token("boss@example.com"))
-	if code != http.StatusBadGateway || got.Error == "" || strings.Contains(got.Error, "wrong") {
+	if code != http.StatusServiceUnavailable || got.Error == "" || strings.Contains(got.Error, "wrong") {
 		t.Fatalf("got %d %q", code, got.Error)
 	}
 }

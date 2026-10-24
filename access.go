@@ -321,7 +321,8 @@ func (a *access) serveJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("[access] %v", err)
-		joinPage(w, http.StatusBadGateway, "Could not let you in just now", "Open the link again in a moment.")
+		// Not 502: Cloudflare replaces an origin's 502 with its own error page, hiding this one.
+		joinPage(w, http.StatusServiceUnavailable, "Could not let you in just now", "Open the link again in a moment.")
 		return
 	}
 	if len(added) > 0 {
@@ -382,7 +383,7 @@ func providerError(w http.ResponseWriter, err error) {
 		return
 	}
 	log.Printf("[access] %v", err)
-	writeError(w, http.StatusBadGateway, "Could not reach the access provider. Try again in a moment")
+	writeError(w, http.StatusServiceUnavailable, "Could not reach the access provider. Try again in a moment")
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
