@@ -119,9 +119,7 @@ func TestRemuxedSwitchKeepsOneClock(t *testing.T) {
 		go func() {
 			for rest := src; len(rest) > 0; {
 				n := min(len(rest), chunkSize)
-				for !r.write(rest[:n]) {
-					time.Sleep(time.Millisecond)
-				}
+				r.write(rest[:n])
 				rest = rest[n:]
 			}
 			close(r.in)
@@ -336,5 +334,73 @@ func TestSwitchThroughTheProxyKeepsOneClock(t *testing.T) {
 		if lastPos < size*9/10 {
 			t.Errorf("%s stops at byte %d of %d, after %d packets: the new source never reached it", stream, lastPos, size, n)
 		}
+	}
+}
+
+// The engine opens with its whole buffer at once, more than ffmpeg's queue holds. The relay must
+// stop reading the engine until ffmpeg catches up, not drop what does not fit.
+func TestOpeningBurstIsHeldBackNotDropped(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("no ffmpeg")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("no ffprobe")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "burst.ts")
+	if out, err := exec.Command(bin, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25", "-t", "20",
+		"-vf", "noise=alls=60:allf=t", "-c:v", "libx264", "-g", "50", "-preset", "ultrafast", "-b:v", "8000k", "-f", "mpegts", path).CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg cannot make a test source: %v %s", err, out)
+	}
+	media, _ := os.ReadFile(path)
+	if len(media) < remuxBacklog*chunkSize*3/2 {
+		t.Fatalf("the source is %d bytes, too small to overflow the queue", len(media))
+	}
+	engine := newSourceEngine(map[string]int{slowSource: 4000})
+	engine.media = map[string][]byte{slowSource: media}
+	engine.burst = len(media)
+	srv, h := newSwitchingProxy(t, engine, slowSource)
+	// An ffmpeg that takes a second to start reading, as one probing its input on a Pi does.
+	slow := filepath.Join(dir, "slow-ffmpeg")
+	os.WriteFile(slow, []byte("#!/bin/sh\nsleep 1\nexec "+bin+" \"$@\"\n"), 0o755)
+	h.ffmpeg = slow
+
+	frames := func(b []byte) int {
+		p := filepath.Join(dir, "probe.ts")
+		os.WriteFile(p, b, 0o644)
+		out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+			"-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", p).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The count comes twice, once under the program and once on its own.
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 {
+			t.Fatal("ffprobe counted no video")
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(fields[0], ","))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	want := frames(media)
+	if want < 400 {
+		t.Fatalf("the source has %d frames, want 20 s of them", want)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/dazn-laliga-1080p", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	// ffmpeg keeps its last few packets until more input comes, and none does.
+	if n := frames(got[:len(got)/tsPacket*tsPacket]); n < want-25 {
+		t.Errorf("the viewer got %d of the source's %d frames", n, want)
 	}
 }

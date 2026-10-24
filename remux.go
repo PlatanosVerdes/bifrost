@@ -16,7 +16,12 @@ import (
 // shifts each run's timestamps and continuity counters to carry on from the run before it.
 
 const (
-	remuxBacklog = 256 // chunks queued for ffmpeg's stdin, 8 MB; a full queue means ffmpeg is stuck
+	// Chunks queued for ffmpeg's stdin, 2 MB. The engine's opening burst comes faster than ffmpeg
+	// takes it, so a full queue stops reading the engine, which holds the rest, instead of dropping.
+	// Kept well under a viewer's backlog: ffmpeg passes on its queue at once when it starts.
+	remuxBacklog = 64
+	// A queue that stays full this long is a stuck ffmpeg, restarted.
+	remuxStuckAfter = 10 * time.Second
 	// How long a handed-over source gets to come out of its remux before the switch is abandoned.
 	remuxStartWait = 15 * time.Second
 	stderrLines    = 10 // per run, so a corrupt source does not flood the log
@@ -29,6 +34,7 @@ var remuxArgs = []string{"-hide_banner", "-nostdin", "-loglevel", "fatal",
 
 // remux is one ffmpeg run. write never blocks, so the relay cannot deadlock against ffmpeg's output.
 type remux struct {
+	fullSince time.Time // when the relay last found the queue full; zero while it has room
 	in        chan []byte
 	out       chan []byte // whole TS packets; closed when ffmpeg exits
 	cancel    context.CancelFunc
@@ -80,8 +86,13 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 		defer close(r.out)
 		align := &tsAligner{dropLead: true}
 		for {
+			// Whole chunks, as from the engine: a viewer's backlog counts chunks, and the few KB a pipe
+			// read gives filled it in ffmpeg's first burst and dropped the viewer.
 			buf := make([]byte, chunkSize)
-			n, err := stdout.Read(buf)
+			n, err := io.ReadFull(stdout, buf)
+			if err == io.ErrUnexpectedEOF {
+				err = io.EOF
+			}
 			if out := align.push(buf[:n]); len(out) > 0 {
 				select {
 				case r.out <- out:
@@ -102,13 +113,32 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 	return r, nil
 }
 
-func (r *remux) write(b []byte) bool {
-	select {
-	case r.in <- b:
-		return true
-	default:
-		return false
+// feed is the source's chunks while ffmpeg's queue has room, and nil (never ready) while it is
+// full. A raw stream always reads its source.
+func (r *remux) feed(chunks chan []byte) <-chan []byte {
+	if r == nil {
+		return chunks
 	}
+	if len(r.in) < cap(r.in) {
+		r.fullSince = time.Time{}
+		return chunks
+	}
+	if r.fullSince.IsZero() {
+		r.fullSince = time.Now()
+	}
+	return nil
+}
+
+// write is only called after feed handed out a chunk, so the queue has room for it.
+func (r *remux) write(b []byte) {
+	r.in <- b
+}
+
+func (r *remux) stuckFor() time.Duration {
+	if r == nil || r.fullSince.IsZero() {
+		return 0
+	}
+	return time.Since(r.fullSince)
 }
 
 func (r *remux) stop() {

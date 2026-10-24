@@ -194,6 +194,7 @@ type sourceEngine struct {
 	live    map[string]int
 	players map[string]context.CancelFunc
 	media   map[string][]byte // real TS to play for an id, once, instead of marker packets
+	burst   int               // bytes of media sent at once first, like the engine's opening buffer
 }
 
 func newSourceEngine(down map[string]int) *sourceEngine {
@@ -256,6 +257,12 @@ func (e *sourceEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		media := e.media[id]
 		e.mu.Unlock()
 		if media != nil {
+			if n := min(e.burst, len(media)); n > 0 {
+				if _, err := w.Write(media[:n]); err != nil {
+					return
+				}
+				media = media[n:]
+			}
 			for rest := media; len(rest) > 0; {
 				n := min(len(rest), 7*tsPacket)
 				if _, err := w.Write(rest[:n]); err != nil {

@@ -338,9 +338,11 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 	reb := newRebaser()
 	mux := s.remux(ctx, up)
 	var next *cutover
+	stuck := time.NewTicker(time.Second)
+	defer stuck.Stop()
 	for {
 		select {
-		case chunk, open := <-up.chunks:
+		case chunk, open := <-mux.feed(up.chunks):
 			if !open {
 				if ctx.Err() == nil {
 					log.Printf("[proxy] %s engine stream ended after %s: %v", s.label, time.Since(start).Round(time.Second), up.err)
@@ -357,10 +359,18 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 			s.relayed.Add(int64(len(out)))
 			if mux == nil {
 				s.broadcast(out)
-			} else if !mux.write(out) {
-				log.Printf("[proxy] %s remux fell behind, restarting it", s.label)
+			} else {
+				mux.write(out)
+			}
+		case <-stuck.C:
+			if mux.stuckFor() > remuxStuckAfter {
+				log.Printf("[proxy] %s remux took nothing for %s, restarting it", s.label, remuxStuckAfter)
 				mux.stop()
 				mux, reb.restart = s.remux(ctx, up), []byte{}
+			}
+			if next != nil && next.mux.stuckFor() > remuxStuckAfter {
+				next.abandon("its remux took nothing for " + remuxStuckAfter.String())
+				next = nil
 			}
 		case out, open := <-mux.output():
 			if !open {
@@ -400,10 +410,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 			}
 			if out := next.align.push(chunk); len(out) > 0 {
 				next.h.drained += int64(len(out))
-				if !next.mux.write(out) {
-					next.abandon("its remux fell behind")
-					next = nil
-				}
+				next.mux.write(out)
 			}
 		case out, open := <-next.output():
 			if !open {
@@ -477,7 +484,7 @@ func (c *cutover) input() <-chan []byte {
 	if c == nil {
 		return nil
 	}
-	return c.h.up.chunks
+	return c.mux.feed(c.h.up.chunks)
 }
 
 func (c *cutover) output() <-chan []byte {
