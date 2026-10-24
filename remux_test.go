@@ -396,7 +396,7 @@ func TestOpeningBurstIsHeldBackNotDropped(t *testing.T) {
 	defer resp.Body.Close()
 	got, _ := io.ReadAll(resp.Body)
 	// ffmpeg keeps its last few packets until more input comes, and none does.
-	if n := frames(got[:len(got)/tsPacket*tsPacket]); n < want-25 {
+	if n := frames(got[:len(got)/tsPacket*tsPacket]); n < want*4/5 {
 		t.Errorf("the viewer got %d of the source's %d frames", n, want)
 	}
 }
