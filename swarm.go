@@ -333,6 +333,8 @@ func swarmMetrics(streams []streamStatus) []byte {
 		func(_ streamStatus, w *swarmStatus) float64 { return float64(w.Stalls) })
 	metric("acestream_stream_source_switches_total", "counter", "Times the channel moved its viewers to a better source since bifrost started",
 		func(st streamStatus, _ *swarmStatus) float64 { return float64(st.channelSwitches) })
+	metric("acestream_stream_remux_restarts_total", "counter", "Times the channel's ffmpeg remux was restarted, stuck or ended under a playing source, since bifrost started",
+		func(st streamStatus, _ *swarmStatus) float64 { return float64(st.remuxRestarts) })
 	return buf.Bytes()
 }
 

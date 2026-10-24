@@ -260,13 +260,13 @@ func (u *upstream) pump(body io.ReadCloser, first []byte) {
 
 // handover is a probed source ready to take over, with what was measured of it.
 type handover struct {
-	up       *upstream
-	samples  []swarmSample
-	drained  int64
-	before   reading
-	after    reading
-	reason   string
-	switched chan struct{} // closed once the relay plays from it
+	up      *upstream
+	samples []swarmSample
+	drained int64
+	before  reading
+	after   reading
+	reason  string
+	outcome chan string // "" once the relay plays from it, else why it never did
 }
 
 type switchRecord struct {
@@ -396,14 +396,17 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm) {
 	}
 
 	h := handover{up: up, samples: samples, drained: drained, before: before, after: r, reason: reason,
-		switched: make(chan struct{})}
+		outcome: make(chan string, 1)}
 	select {
 	case s.handover <- h:
 		handed = true
 	case <-ctx.Done():
 		return
 	}
-	<-h.switched
+	if failed := <-h.outcome; failed != "" {
+		keep(failed)
+		return
+	}
 	s.probed(probeRecord{At: start, Source: cand, Outcome: "switched", Reason: reason, Current: before, Candidate: after})
 }
 
@@ -469,7 +472,7 @@ func (s *stream) switchTo(old *upstream, h handover) {
 	if h.up.stat != "" {
 		go s.watchSwarm(h.up.ctx, h.up.stat, nw)
 	}
-	close(h.switched)
+	h.outcome <- ""
 }
 
 func (s *stream) probed(r probeRecord) {

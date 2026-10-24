@@ -17,6 +17,7 @@
 | `PROBE_FOR`, `PROBE_COOLDOWN` | `20s`, `3m` | How long a probed source is measured; the wait between two probes of a channel |
 | `ORPHAN_AFTER` | `15m` | Let go a stream only Jellyfin holds once no Jellyfin session has played it for this long; `0` turns it off. Needs `JELLYFIN_URL` |
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](streams.md#moving-to-a-better-source)) |
+| `FFMPEG` | `ffmpeg` | The ffmpeg that remuxes every source so a switch keeps one clock (the image ships a minimal one); `off` relays sources raw |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](sharing.md) |
 | `ACCESS_AUD` | empty (sharing off) | This bifrost's Access app's tag: Access app → Overview → Application Audience (AUD) Tag. Tokens for any other app are refused |
