@@ -58,6 +58,7 @@ function channelState(channel, jellyfin) {
     // Who, and the swarm only when it is not keeping up: the rest is on Activity.
     const who = jellyfin.filter((p) => p.channel === channel.name).map((p) => p.user).filter(Boolean).join(", ");
     const sw = channel.playing.swarm;
+    if (channel.playing.waiting) return { tone: "live", text: html`Waiting for the broadcast · ${who || plural(channel.playing.viewers, "viewer")}` };
     return { tone: "live", text: html`Playing · ${who || plural(channel.playing.viewers, "viewer")}${swarmTone(sw) ? swarm(sw, true) : nothing}` };
   }
   const o = channel.last_open;
@@ -161,7 +162,7 @@ class ChannelGroup extends LitElement {
     return this.ranked(c).find((x) => x.id !== c.playing.source && x.outcome !== "failed");
   }
 
-  switchable(c) { return c.ids.length > 1 && c.playing; }
+  switchable(c) { return c.ids.length > 1 && c.playing && !c.playing.waiting; }
 
   quick(c) {
     if (!this.switchable(c)) return nothing;
