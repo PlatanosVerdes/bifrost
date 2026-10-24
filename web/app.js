@@ -1,7 +1,7 @@
 // bifrost's status page: the app element fetches, every component below renders what it is given.
 import { LitElement, html, css, nothing } from "./vendor/lit-all.min.js";
 
-const REFRESH_MS = 10000;
+const REFRESH_MS = 3000;
 
 // Drawn here from the email, so the address never leaves the page: two hues from its hash and the
 // first letter of the user part.
@@ -592,13 +592,17 @@ class BifrostApp extends LitElement {
     window.addEventListener("hashchange", this.onHash);
     this.refresh();
     fetch("api/access").then((r) => r.ok ? r.json() : null).then((a) => { this.access = a; }).catch(() => {});
-    this.timer = setInterval(() => this.refresh(), REFRESH_MS);
+    // Only while the page is in view, and at once on coming back, so a hidden tab costs the Pi nothing.
+    this.timer = setInterval(() => { if (!document.hidden) this.refresh(); }, REFRESH_MS);
+    this.onVisible = () => { if (!document.hidden) this.refresh(); };
+    document.addEventListener("visibilitychange", this.onVisible);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("hashchange", this.onHash);
     clearInterval(this.timer);
+    document.removeEventListener("visibilitychange", this.onVisible);
   }
 
   async refresh() {
@@ -656,7 +660,7 @@ class BifrostApp extends LitElement {
         ? html`<activity-view .status=${s} .channels=${this.channels} .reload=${() => this.refresh()}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
-      <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
+      <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.</p>
     </div>`;
   }
 }
