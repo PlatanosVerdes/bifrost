@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// pesPacket is a TS packet on pid starting a PES with pts and dts, and a PCR when pcr >= 0.
 func pesPacket(pid uint16, cc byte, pts, dts, pcr int64) []byte {
 	p := make([]byte, tsPacket)
 	p[0], p[1], p[2] = tsSync, 0x40|byte(pid>>8), byte(pid)
@@ -82,8 +81,6 @@ func TestRebaserLeavesOtherPacketsAlone(t *testing.T) {
 	}
 }
 
-// Two runs of real ffmpeg on two sources with unrelated clocks and PIDs, cut mid-GOP the way a
-// switch cuts them, must come out as one stream whose timestamps only move forward.
 func TestRemuxedSwitchKeepsOneClock(t *testing.T) {
 	bin, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -163,14 +160,12 @@ func TestRemuxedSwitchKeepsOneClock(t *testing.T) {
 			prev = ts
 			n++
 		}
-		// About 4 s of the first source and 5 of the second, minus what precedes the second's keyframe.
 		if prev < 7 {
 			t.Errorf("%s ends at %.1fs over %d packets, want both sources in it", stream, prev, n)
 		}
 	}
 }
 
-// psiPacket is a TS packet on pid carrying one section, its CRC filled in.
 func psiPacket(pid uint16, section []byte) []byte {
 	p := bytes.Repeat([]byte{0xff}, tsPacket)
 	p[0], p[1], p[2], p[3], p[4] = tsSync, 0x40|byte(pid>>8), byte(pid), 0x10, 0
@@ -246,8 +241,6 @@ func TestCRCMatchesFFmpeg(t *testing.T) {
 	}
 }
 
-// A starving source switched to a better one through the proxy, both real video remuxed by real
-// ffmpeg, reaches the viewer as one stream whose clock never goes back or stops.
 func TestSwitchThroughTheProxyKeepsOneClock(t *testing.T) {
 	bin, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -337,8 +330,6 @@ func TestSwitchThroughTheProxyKeepsOneClock(t *testing.T) {
 	}
 }
 
-// The engine opens with its whole buffer at once, more than ffmpeg's queue holds. The relay must
-// stop reading the engine until ffmpeg catches up, not drop what does not fit.
 func TestOpeningBurstIsHeldBackNotDropped(t *testing.T) {
 	bin, err := exec.LookPath("ffmpeg")
 	if err != nil {

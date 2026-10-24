@@ -54,12 +54,11 @@ type hub struct {
 	schedule                 *schedule
 	swarmEvery               time.Duration
 
-	policy    switchPolicy
-	probing   string                          // the slug probing another source: one probe at a time, Pi-wide
-	lastProbe map[string]time.Time            // slug -> when its last probe ended
-	probedAt  map[string]map[string]time.Time // slug -> content id -> when it was last probed
-	switches  map[string]int                  // slug -> source switches since bifrost started
-	// slug -> ffmpeg runs restarted since bifrost started (stuck, or ended under a playing source)
+	policy        switchPolicy
+	probing       string                          // the slug probing another source: one probe at a time, Pi-wide
+	lastProbe     map[string]time.Time            // slug -> when its last probe ended
+	probedAt      map[string]map[string]time.Time // slug -> content id -> when it was last probed
+	switches      map[string]int                  // slug -> source switches since bifrost started
 	remuxRestarts map[string]int
 	probes        atomic.Int64
 
@@ -333,8 +332,7 @@ func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 }
 
 // relay hands the source's chunks to the viewers, packet-aligned, until a probe hands over a better
-// source: from then on the same viewers get that one, and the old session is closed. With ffmpeg,
-// each source is remuxed, and a handed-over one plays only once its remux delivers.
+// source: from then on the same viewers get that one, and the old session is closed.
 func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 	align := &tsAligner{}
 	reb := newRebaser()
@@ -444,8 +442,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 	}
 }
 
-// remux starts ffmpeg for a source, or answers nil to relay it raw: without ffmpeg, or when it will
-// not start, the stream plays as it did before remuxing.
+// nil relays the source raw, as before remuxing.
 func (s *stream) remux(ctx context.Context, up *upstream) *remux {
 	if s.h.ffmpeg == "" {
 		return nil
@@ -464,7 +461,6 @@ func (s *stream) remuxRestarted() {
 	s.h.mu.Unlock()
 }
 
-// output is nil for a raw stream, so the relay's select never picks it.
 func (r *remux) output() <-chan []byte {
 	if r == nil {
 		return nil
@@ -472,7 +468,7 @@ func (r *remux) output() <-chan []byte {
 	return r.out
 }
 
-// cutover is a handed-over source remuxed next to the playing one until its first packets come out.
+// The playing source keeps playing until the handed-over one's remux delivers.
 type cutover struct {
 	h     handover
 	mux   *remux

@@ -10,21 +10,15 @@ import (
 	"time"
 )
 
-// Each source has its own clock, PIDs and GOP, and splicing one into another raw froze the Samsung
-// TV on the first switch. So every source runs through its own `ffmpeg -c copy`, which drops
-// everything before the first keyframe and writes the same PIDs every time, and the rebaser below
-// shifts each run's timestamps and continuity counters to carry on from the run before it.
+// Splicing sources raw froze the Samsung TV: each has its own clock, PIDs and GOP. So each source
+// gets its own `ffmpeg -c copy` run, and tsRebaser makes the runs one continuous stream.
 
 const (
-	// Chunks queued for ffmpeg's stdin, 2 MB. The engine's opening burst comes faster than ffmpeg
-	// takes it, so a full queue stops reading the engine, which holds the rest, instead of dropping.
-	// Kept well under a viewer's backlog: ffmpeg passes on its queue at once when it starts.
-	remuxBacklog = 64
-	// A queue that stays full this long is a stuck ffmpeg, restarted.
+	// 2 MB: well under a viewer's backlog, since ffmpeg passes its whole queue on at once when it starts.
+	remuxBacklog    = 64
 	remuxStuckAfter = 10 * time.Second
-	// How long a handed-over source gets to come out of its remux before the switch is abandoned.
-	remuxStartWait = 15 * time.Second
-	stderrLines    = 10 // per run, so a corrupt source does not flood the log
+	remuxStartWait  = 15 * time.Second
+	stderrLines     = 10 // per run, so a corrupt source does not flood the log
 )
 
 // fatal: at error, the decoders ffmpeg probes with complain about every frame before the first keyframe.
@@ -32,7 +26,6 @@ var remuxArgs = []string{"-hide_banner", "-nostdin", "-loglevel", "fatal",
 	"-probesize", "2000000", "-analyzeduration", "2000000", "-f", "mpegts", "-i", "pipe:0",
 	"-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"}
 
-// remux is one ffmpeg run. write never blocks, so the relay cannot deadlock against ffmpeg's output.
 type remux struct {
 	fullSince time.Time // when the relay last found the queue full; zero while it has room
 	in        chan []byte
@@ -86,8 +79,7 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 		defer close(r.out)
 		align := &tsAligner{dropLead: true}
 		for {
-			// Whole chunks, as from the engine: a viewer's backlog counts chunks, and the few KB a pipe
-			// read gives filled it in ffmpeg's first burst and dropped the viewer.
+			// Whole chunks: a viewer's backlog counts chunks, and few-KB pipe reads filled it and dropped the viewer.
 			buf := make([]byte, chunkSize)
 			n, err := io.ReadFull(stdout, buf)
 			if err == io.ErrUnexpectedEOF {
@@ -113,8 +105,7 @@ func startRemux(parent context.Context, bin, label string) (*remux, error) {
 	return r, nil
 }
 
-// feed is the source's chunks while ffmpeg's queue has room, and nil (never ready) while it is
-// full. A raw stream always reads its source.
+// A full queue stops reading the engine, which holds the rest, instead of dropping what does not fit.
 func (r *remux) feed(chunks chan []byte) <-chan []byte {
 	if r == nil {
 		return chunks
@@ -129,7 +120,6 @@ func (r *remux) feed(chunks chan []byte) <-chan []byte {
 	return nil
 }
 
-// write is only called after feed handed out a chunk, so the queue has room for it.
 func (r *remux) write(b []byte) {
 	r.in <- b
 }
@@ -152,21 +142,17 @@ func (r *remux) stop() {
 }
 
 const (
-	tsClock = 1 << 33 // PTS, DTS and the PCR base wrap at 33 bits of 90 kHz
-	// Gap left between the last timestamp of one run and the first of the next: one 25 fps frame.
+	tsClock    = 1 << 33 // PTS, DTS and the PCR base wrap at 33 bits of 90 kHz
 	spliceStep = 90000 / 25
 )
 
-// tsRebaser makes successive ffmpeg runs one stream: the same PIDs (ffmpeg's), continuous
-// continuity counters, and timestamps that carry on from the last run instead of restarting.
 type tsRebaser struct {
 	restart []byte // a new run of the same source, held until it can be spliced; nil when none
 	offset  int64
 	cc      map[uint16]byte  // next continuity counter per PID
 	last    map[uint16]int64 // last DTS (or PTS) written per PID, after the offset
 	pmts    map[uint16]bool  // PMT PIDs, from the PAT
-	// Every ffmpeg run writes its PMT as version 0, so a source with other codecs or tracks would
-	// look unchanged to the player: a PMT that differs from the last one gets the next version.
+	// Every ffmpeg run writes PMT version 0, so a changed PMT gets the next one or the player ignores it.
 	pmtBody    map[uint16]string
 	pmtVersion map[uint16]byte
 }
@@ -176,11 +162,8 @@ func newRebaser() *tsRebaser {
 		pmtBody: map[uint16]string{}, pmtVersion: map[uint16]byte{}}
 }
 
-// spliceLimit is how much of a new run is held for ready before it plays anyway: ~4 s of a 4 Mbit/s channel.
 const spliceLimit = 2 << 20
 
-// ready says whether b, the start of a new run, holds a timestamp for every PID the stream has
-// played, which splice needs to line them all up.
 func (t *tsRebaser) ready(b []byte) bool {
 	if len(b) >= spliceLimit {
 		return true
@@ -194,9 +177,7 @@ func (t *tsRebaser) ready(b []byte) bool {
 	return true
 }
 
-// splice starts a new run with b. ffmpeg starts video at a keyframe but audio straight away, so
-// what comes before the latest PID's start is dropped, and the rest is shifted to carry on just
-// after where the last run stopped.
+// ffmpeg starts video at a keyframe but audio straight away: audio before the keyframe is dropped.
 func (t *tsRebaser) splice(b []byte) []byte {
 	first := firstTimestamps(b)
 	start, common := int64(0), false
@@ -232,7 +213,6 @@ func (t *tsRebaser) splice(b []byte) []byte {
 	return t.push(kept)
 }
 
-// firstTimestamps is the earliest DTS (or PTS) of each PID in b.
 func firstTimestamps(b []byte) map[uint16]int64 {
 	first := map[uint16]int64{}
 	for i := 0; i+tsPacket <= len(b); i += tsPacket {
@@ -247,7 +227,6 @@ func firstTimestamps(b []byte) map[uint16]int64 {
 	return first
 }
 
-// push rewrites whole packets of the current run in place.
 func (t *tsRebaser) push(b []byte) []byte {
 	for i := 0; i+tsPacket <= len(b); i += tsPacket {
 		t.rewrite(b[i : i+tsPacket])
@@ -306,7 +285,6 @@ func (t *tsRebaser) rewrite(p []byte) {
 	t.last[pid] = last
 }
 
-// psiSection is the section a payload starts with, if it fits in this packet.
 func psiSection(payload []byte) []byte {
 	if len(payload) < 1 || 1+int(payload[0])+3 > len(payload) {
 		return nil
@@ -353,7 +331,6 @@ func (t *tsRebaser) versionPMT(pid uint16, payload []byte) {
 	sec[len(sec)-4], sec[len(sec)-3], sec[len(sec)-2], sec[len(sec)-1] = byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc)
 }
 
-// crc32MPEG is the CRC-32/MPEG-2 PSI sections end with.
 func crc32MPEG(b []byte) uint32 {
 	crc := uint32(0xffffffff)
 	for _, c := range b {
@@ -369,7 +346,6 @@ func crc32MPEG(b []byte) uint32 {
 	return crc
 }
 
-// pesTimestamp is a packet's DTS, or its PTS when it has no DTS, if it starts a PES that has one.
 func pesTimestamp(p []byte) (uint16, int64, bool) {
 	if p[0] != tsSync || p[1]&0x40 == 0 {
 		return 0, 0, false
@@ -408,7 +384,7 @@ func writeTS(b []byte, ts int64) {
 	b[4] = byte(ts<<1)&0xfe | 1
 }
 
-// readPCR is the PCR's 90 kHz base; the 27 MHz extension is left as it is.
+// The 27 MHz extension is left as it is.
 func readPCR(b []byte) int64 {
 	return int64(b[0])<<25 | int64(b[1])<<17 | int64(b[2])<<9 | int64(b[3])<<1 | int64(b[4]>>7)
 }
@@ -425,7 +401,6 @@ func wrap(ts int64) int64 {
 	return (ts%tsClock + tsClock) % tsClock
 }
 
-// wrapDiff is a-b on the 33-bit clock, between -2^32 and 2^32.
 func wrapDiff(a, b int64) int64 {
 	return wrap(a-b+tsClock/2) - tsClock/2
 }

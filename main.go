@@ -63,7 +63,6 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-// findFFmpeg answers "" to relay sources raw: FFMPEG=off, or no ffmpeg where it points.
 func findFFmpeg(name string) string {
 	if name == "off" {
 		return ""
