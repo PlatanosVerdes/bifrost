@@ -280,6 +280,7 @@ func newStatusProxy(t *testing.T, engine http.Handler, ids ...string) (*httptest
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", h.serveStatus)
 	mux.HandleFunc("/api/channels", h.serveChannels)
+	mux.HandleFunc("POST /api/channels/{slug}/source", h.servePick)
 	mux.HandleFunc("/", h.serve)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
