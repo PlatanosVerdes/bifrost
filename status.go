@@ -14,10 +14,6 @@ import (
 	"time"
 )
 
-// What bifrost already knows, served without opening anything: the list it read, what it told
-// Jellyfin, what is playing through it and how the last opens went. A status page or another
-// service reads this instead of probing channels, which this Pi cannot afford.
-
 const recentOpens = 20
 
 type listStatus struct {
@@ -145,12 +141,10 @@ func (b *statusBoard) setDevice(at time.Time, device string) {
 	}
 }
 
-// deviceChecks are when, after an open plays, bifrost asks Jellyfin who is watching it: Jellyfin
-// probes the stream for a few seconds before its session names the channel.
+// deviceChecks: Jellyfin probes the stream for a few seconds before its session names the channel.
 var deviceChecks = []time.Duration{10 * time.Second, 20 * time.Second, 30 * time.Second}
 
-// noteDevice records which Jellyfin client played an open. A player that went to bifrost directly
-// has no Jellyfin session and keeps no device.
+// A player that went to bifrost directly has no Jellyfin session and keeps no device.
 func (h *hub) noteDevice(at time.Time, label string) {
 	if h.jellyfinURL == "" {
 		return
@@ -248,8 +242,8 @@ type channelInfo struct {
 	Sources  []sourceFacts `json:"sources"` // the playlist's order, with what was last seen of each
 }
 
-// serveChannels is the catalog for players that go to the engine directly (farnsworth): each
-// channel with its sources, the one that last produced video first.
+// serveChannels is the catalog for players that go to the engine directly, the source that last produced
+// video first.
 func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 	h.table.mu.RLock()
 	order := append([]string(nil), h.table.order...)
@@ -279,7 +273,6 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"channels": out})
 }
 
-// onAir is what a channel airs now and next, by the guide id its playlist entry carries.
 func (h *hub) onAir(slug string) (now, next *airing) {
 	g := h.table.group(slug)
 	if g == nil {
@@ -291,8 +284,8 @@ func (h *hub) onAir(slug string) (now, next *airing) {
 // recentlyFailed is how long a source that failed to open is tried after the others.
 const recentlyFailed = 15 * time.Minute
 
-// ordered tries the source that last produced video first and one that failed lately last, so a
-// dead first source does not cost every open its whole wait.
+// The source that last produced video goes first and one that failed lately last, so a dead first
+// source does not cost every open its whole wait.
 func (h *hub) ordered(slug string, ids []string) []string {
 	h.mu.Lock()
 	good := h.lastGood[slug]
@@ -324,9 +317,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc.Encode(v)
 }
 
-// jellyfinPlayback is how Jellyfin is delivering a live channel: copying it or re-encoding it, and
-// why. A re-encode on a Pi 4 cannot keep up with 1080p, so this is the first thing to look at when a
-// channel plays for a few seconds and stalls.
+// jellyfinPlayback is how Jellyfin delivers a live channel. A re-encode on a Pi 4 cannot keep up with
+// 1080p, so a channel that plays a few seconds and stalls shows up here first.
 type jellyfinPlayback struct {
 	Channel   string   `json:"channel"`
 	Client    string   `json:"client"`
@@ -352,7 +344,6 @@ func (p jellyfinPlayback) who() string {
 	return strings.Join(parts, " · ")
 }
 
-// jellyfinSessions asks Jellyfin, once per status request, which live channels it is playing.
 func jellyfinSessions(baseURL, apiKey string) ([]jellyfinPlayback, error) {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/Sessions?activeWithinSeconds=60", nil)
 	if err != nil {

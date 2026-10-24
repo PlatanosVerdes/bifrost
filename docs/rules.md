@@ -15,6 +15,19 @@ the probe got a 500, Jellyfin decided without knowing the codecs, and re-encoded
 stream with libx264, which a Pi 4 does at a fraction of real time: the picture played a few seconds
 and stalled. With the probe answered, Jellyfin copies the stream and the Pi barely notices.
 
+**A HEAD never opens a channel.** Jellyfin sends HEAD to tell HLS from TS, then GET on the same
+connection. A HEAD that streamed would hold that connection and leave the GET waiting until Jellyfin's
+100 s timeout, so HEAD answers `video/mp2t` and nothing else.
+
+**Every source goes through its own `ffmpeg -c copy`.** Each source has its own clock, PIDs and GOP,
+and splicing one in raw froze the Samsung TV. The remuxed runs are rebased into one continuous
+stream, and the old source is closed only once the new one has delivered (see
+[Moving to a better source](streams.md#moving-to-a-better-source)). The slates are spliced the same way.
+
+**The probe asks the engine with a `pid` of its own.** The engine tells players apart by address and
+a new download stops that player's previous one, so a probe without a pid killed the stream it was
+meant to rescue.
+
 **Whole 32 KB chunks.** A viewer is dropped once it falls 256 chunks behind. The engine hands data
 over a few KB at a time, and counting those as chunks made the backlog a few hundred KB: the opening
 burst filled it and dropped the TV the moment the channel started.
@@ -36,7 +49,7 @@ replaced was Refresh Channels (internet channels), which Jellyfin accepted with 
 reread the playlist, for six months.
 
 **The guide is cut down to our channels.** The published guide is 34 MB for 642 channels; ours use
-about 22 of them and 2% of the programmes. Parsing all of it was what made a refresh cost a Pi 4 two
+about 23 of them and 2% of the programmes. Parsing all of it was what made a refresh cost a Pi 4 two
 and a half minutes. Cut down it is under 1 MB and a refresh takes seconds, so it can follow every
 real change. The full guide is downloaded once a day; a new channel re-trims from that copy.
 

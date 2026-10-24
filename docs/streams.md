@@ -79,8 +79,8 @@ better source of its channel, under rules meant never to leave them with nothing
   point of the broadcast) but does not stall, and the delay to live does not grow. A remux that never
   delivers within 15 s keeps the old source. Only then is the old session closed, and the new
   source becomes the channel's last good one. The remux costs ~0.6% of a Pi 4 core and ~8 MB per
-  stream; without ffmpeg (`FFMPEG=off`, or not found) sources are relayed raw, packet-aligned, as
-  before.
+  stream; without ffmpeg (`FFMPEG=off`, or not found) sources are relayed raw, packet-aligned, and a
+  switch may freeze some players.
 - **A probe that fails changes nothing.** One that never opens, sends no video, ends, or is not
   better is closed, and the reason is logged and kept in the stream's `last_probe`.
 
@@ -115,6 +115,16 @@ sources shows its count as a button: it opens the channel's sources, best first 
 seen of each, with a Play button each, and the state line offers "Switch to best". Either moves
 everyone watching it, through the same remuxed handover; a source that does not start leaves the
 stream where it was.
+
+## While nothing delivers
+
+With ffmpeg available (and `SLATE` not `off`) a channel does not answer with an error. The viewer is
+sent a 24 s looping slate at once, so the player starts without waiting: a loading slate ("Tuning in…")
+while the sources are first tried, then, once every source has failed within `CHANNEL_MAX_WAIT`, the
+off-air slate. bifrost keeps trying the sources every 30 s while anyone watches. The first one to
+deliver video is remuxed next to the slate and takes over through the same handover as a switch, so
+the stream never restarts. Both slates are embedded MPEG-TS played at their own pace, at no CPU cost;
+see [slate/README.md](../slate/README.md) to rebuild them.
 
 ## Streams nobody watches
 

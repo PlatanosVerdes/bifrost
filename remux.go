@@ -22,7 +22,7 @@ const (
 	stderrLines     = 5 // the end of ffmpeg's stderr, logged when it exits on its own
 )
 
-// info for the stream listing the page shows; the rest of stderr is noise from the probing decoders.
+// Loglevel info gives the stream listing the page shows; the rest of stderr is probing-decoder noise.
 var remuxArgs = []string{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info",
 	"-probesize", "2000000", "-analyzeduration", "2000000", "-f", "mpegts", "-i", "pipe:0",
 	"-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"}

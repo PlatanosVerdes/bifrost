@@ -67,8 +67,7 @@ func (l *joinLinks) find(token string, now time.Time) (joinLink, bool) {
 	return j, ok && now.Before(j.Expires)
 }
 
-// claim marks the link used on disk before anyone is added, so a failed write can never let a second
-// person in after a restart.
+// Marks the link used on disk before anyone is added, so a failed write cannot let a second person in.
 func (l *joinLinks) claim(token, email string) error {
 	return l.mark(token, email)
 }

@@ -1,5 +1,4 @@
-// bifrost's status page: Lit components, one class per piece. The app element fetches, everything
-// below it renders what it is given. Nothing here opens a channel.
+// bifrost's status page: the app element fetches, every component below renders what it is given.
 import { LitElement, html, css, nothing } from "./vendor/lit-all.min.js";
 
 const REFRESH_MS = 10000;
@@ -22,8 +21,6 @@ const avatar = (email) => {
   return html`<img class="avatar" src=${email ? avatars.get(email) : nobody} alt="">`;
 };
 
-// --- formatting, shared by every component ---------------------------------------------------
-
 const known = (t) => { const d = new Date(t); return !isNaN(d) && d.getFullYear() > 2000 ? d : null; };
 const hhmm = (t) => known(t)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) ?? "";
 const ago = (t) => {
@@ -42,7 +39,7 @@ const kb = (bytes) => Math.round((bytes ?? 0) / 1024);
 // only once it has been under for a while (bifrost's starving flag). A dip to 0.98x is not an alarm.
 const swarmTone = (sw) => sw?.starving ? "short" : sw?.headroom > 0 && sw.headroom < 1 ? "tight" : "";
 
-// The engine's swarm on one line, for the channel list: only the speeds take a colour, never the peers.
+// Only the speeds take a colour, never the peers.
 const swarm = (sw, speedsOnly = false) => {
   if (!sw?.sampled_at) return nothing;
   const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second);
@@ -52,7 +49,6 @@ const swarm = (sw, speedsOnly = false) => {
   return html` · ${speedsOnly ? nothing : `${plural(sw.peers, "peer")} · `}<span class=${swarmTone(sw)} title=${title}>${rate ? `${down}/${rate} KB/s` : `${down} KB/s`}</span>${sw.stalls ? ` · ${plural(sw.stalls, "stall")}` : ""}`;
 };
 
-// What a channel's dot and line say: playing now, else its last open since bifrost started.
 function channelState(channel, jellyfin) {
   if (channel.playing) {
     // Who, and the swarm only when it is not keeping up: the rest is on Activity.
@@ -68,7 +64,6 @@ function channelState(channel, jellyfin) {
   return { tone: "warn", text: `Left before it started at ${hhmm(o.at)} (${secs(o.seconds)})` };
 }
 
-// Styles every component starts from: cards, dots, small text. Colours only through the tokens.
 const base = css`
   :host { display: block; }
   * { box-sizing: border-box; }
@@ -84,9 +79,11 @@ const base = css`
   .tight { color: var(--calm-warn); } .short { color: var(--calm-bad); } .quick { color: var(--calm-ok); }
   h2 { font-size: 14px; color: var(--muted); margin: 26px 0 10px; font-weight: 600; }
   h2.first { margin-top: 0; }
+  .src { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
+  button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
+  button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 `;
-
-// --- switching a playing channel to another of its own sources ------------------------------
 
 const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
 
@@ -94,10 +91,7 @@ class SourcePicker extends LitElement {
   static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true } };
   static styles = [base, css`
     :host { display: inline; }
-    .src { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
-    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
-    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-    button.src:focus-visible, .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
     .link:hover, .link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
     .ctl { font: inherit; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 0; border-radius: 6px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
@@ -180,8 +174,6 @@ class SourcePicker extends LitElement {
 }
 customElements.define("source-picker", SourcePicker);
 
-// --- one block of channels, scrolling on its own ---------------------------------------------
-
 class ChannelGroup extends LitElement {
   static styles = [base, css`
     .card { height: 300px; display: flex; flex-direction: column; }
@@ -194,10 +186,7 @@ class ChannelGroup extends LitElement {
     .state { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
     .state.played, .state.warn, .state.live { color: var(--muted); }
     .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
-    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
-    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-    button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .src { color: var(--muted); }
   `];
 
   static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false } };
@@ -226,8 +215,6 @@ class ChannelGroup extends LitElement {
   }
 }
 customElements.define("channel-group", ChannelGroup);
-
-// --- the Channels tab: search, legend, the groups ---------------------------------------------
 
 class ChannelBoard extends LitElement {
   static properties = { channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, query: { state: true } };
@@ -273,8 +260,6 @@ class ChannelBoard extends LitElement {
 }
 customElements.define("channel-board", ChannelBoard);
 
-// --- the Activity tab: now, recent opens, list and guide ---------------------------------------
-
 class ActivityView extends LitElement {
   static properties = { status: { attribute: false }, channels: { attribute: false }, reload: { attribute: false } };
   static styles = [base, css`
@@ -305,8 +290,7 @@ class ActivityView extends LitElement {
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
     .tag.trans { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
     .tag.slow { background: color-mix(in srgb, var(--calm-bad) 16%, transparent); color: var(--calm-bad); }
-    /* Two channels and five opens high (set in updated()), then the card scrolls; not on a phone, where a scroll
-       inside the page's scroll traps the thumb. */
+    /* Capped at two channels and five opens (set in updated()); not on a phone, where a scroll inside a scroll traps the thumb. */
     .scroller { max-height: var(--fit, none); overflow-y: auto; scrollbar-width: thin; margin-right: -8px; padding-right: 8px; }
     @media (max-width: 600px) { .scroller { max-height: none; overflow: visible; margin-right: 0; padding-right: 0; } }
     .stream > p.muted { font-size: 12px; margin: 10px 0 0; }
@@ -361,8 +345,7 @@ class ActivityView extends LitElement {
     return html`<div class="fact"><span class="lbl">Watching</span>${watchers.map((w) => html`${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(", ")}</span>`)}</div>`;
   }
 
-  // The headroom bar is the one loud thing on the card: whether the channel keeps up. The tick marks
-  // what the stream needs (1x); the bar fills to 1.5x.
+  // The headroom bar is the loud thing on the card: the tick is what the stream needs (1x), the bar fills to 1.5x.
   swarmFact(sw) {
     if (!sw?.sampled_at) return html`<div class="fact"><span class="lbl">Swarm</span><span class="muted">measuring…</span></div>`;
     const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second), tone = swarmTone(sw);
@@ -432,8 +415,6 @@ class ActivityView extends LitElement {
   }
 }
 customElements.define("activity-view", ActivityView);
-
-// --- sharing: who may open this page, kept by the access provider in front of bifrost -------------
 
 class ShareDialog extends LitElement {
   static properties = { access: { attribute: false }, heading: {}, data: { state: true }, error: { state: true }, busy: { state: true }, copied: { state: true }, created: { state: true } };
@@ -565,8 +546,6 @@ class ShareDialog extends LitElement {
   }
 }
 customElements.define("share-dialog", ShareDialog);
-
-// --- the page: header, tabs, fetching ---------------------------------------------------------
 
 class BifrostApp extends LitElement {
   static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true } };

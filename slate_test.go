@@ -14,16 +14,18 @@ import (
 	"time"
 )
 
-func TestEmbeddedSlateLoops(t *testing.T) {
-	sl, err := newSlate(offairTS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sl.duration < 23900*time.Millisecond || sl.duration > 24100*time.Millisecond {
-		t.Errorf("the slate lasts %s, want 24 s", sl.duration)
-	}
-	if got := len(firstTimestamps(sl.loop[:sl.head])); got != 2 {
-		t.Errorf("its head has timestamps for %d PIDs, want video and audio", got)
+func TestEmbeddedSlatesLoop(t *testing.T) {
+	for name, ts := range map[string][]byte{"off-air": offairTS, "loading": loadingTS} {
+		sl, err := newSlate(ts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if sl.duration < 23900*time.Millisecond || sl.duration > 24100*time.Millisecond {
+			t.Errorf("%s lasts %s, want 24 s", name, sl.duration)
+		}
+		if got := len(firstTimestamps(sl.loop[:sl.head])); got != 2 {
+			t.Errorf("%s head has timestamps for %d PIDs, want video and audio", name, got)
+		}
 	}
 }
 

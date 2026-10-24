@@ -1,9 +1,5 @@
-// bifrost bridges an AceStream channel list published on IPFS to Jellyfin.
-//
-// One process with two halves sharing the channel catalog in memory: the list loop, which reads the
-// list, writes Jellyfin's playlist and cut-down guide and tells Jellyfin when either really changed;
-// and the proxy, which Jellyfin plays from, picking a live source per channel and sharing one
-// engine connection among everyone watching it. See README.md for why each piece is the way it is.
+// bifrost reads an AceStream channel list published on IPFS, writes Jellyfin's playlist and guide, and
+// serves the proxy Jellyfin plays channels from. See README.md.
 package main
 
 import (
@@ -15,7 +11,6 @@ import (
 	"time"
 )
 
-// buildVersion is set at build time to the release tag.
 var buildVersion = "local"
 
 func main() {

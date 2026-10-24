@@ -11,16 +11,13 @@ import (
 	"time"
 )
 
-// A channel's sources do not degrade together: during a busy evening the playing one sat
-// at 0.65-0.95x of its bitrate for minutes while another source of the same channel downloaded
-// twice that. So once the playing source has starved for a while, bifrost opens one other source
-// next to it, measures it for a bounded time, and splices it into the same viewers only when it is
-// clearly better. The playing source is never stopped before its replacement is delivering.
+// A channel's sources do not degrade together (one sat at 0.65-0.95x for minutes while another got
+// twice that), so a starving channel probes one other source and splices it in only when clearly better.
 
 const (
 	tsPacket = 188
 	tsSync   = 0x47
-	// How far into a stream the TS sync is looked for before it is treated as something else.
+	// How far into a stream the TS sync is searched for.
 	tsSearch = 16 * 1024
 	// Opening a probe gets at most this, on top of the sampling window.
 	probeOpenWait = 15 * time.Second
@@ -39,7 +36,6 @@ type switchPolicy struct {
 var defaultPolicy = switchPolicy{after: 30 * time.Second, probeFor: 20 * time.Second, cooldown: 3 * time.Minute,
 	minHeadroom: 1.1, margin: 0.2, starvingBelow: 1}
 
-// probeDue says whether a stream should probe another source now, and if not, why.
 func (p switchPolicy) probeDue(now, starvingSince, lastProbe time.Time, busy bool, others int) (bool, string) {
 	switch {
 	case p.after <= 0:
@@ -97,7 +93,6 @@ func candidateReading(samples []swarmSample, channelRate float64) reading {
 	return readingOf(samples[1:], math.Max(channelRate, bitrate(samples)))
 }
 
-// judge decides on a probed candidate against the playing source's recent average.
 func (p switchPolicy) judge(current, candidate reading, stillStarving bool) (bool, string) {
 	need := current.Headroom + p.margin
 	// Fewer than half the peers is a thinner swarm, quicker to fall apart: ask for twice the margin.
@@ -153,9 +148,8 @@ func others(ids []string, current string) int {
 	return n
 }
 
-// tsAligner hands out whole 188-byte TS packets, keeping a packet's start back until its end
-// arrives, so a switch never splices into the middle of one. A stream with no TS sync in its first
-// tsSearch bytes is passed through as it comes.
+// Hands out whole 188-byte TS packets so a switch never splices mid-packet. A stream with no sync in
+// its first tsSearch bytes is passed through.
 type tsAligner struct {
 	dropLead bool // a spliced-in source starts at its first sync; the opening one loses nothing
 	synced   bool
@@ -208,8 +202,8 @@ func tsSyncAt(b []byte) int {
 	return -1
 }
 
-// upstream is one engine session feeding a stream, read in whole chunks by its own goroutine so the
-// relay can take another source's chunks without waiting on a read that a starving engine holds.
+// upstream is one engine session read by its own goroutine, so the relay never waits on a read that a
+// starving engine holds.
 type upstream struct {
 	id     string
 	stat   string
@@ -241,8 +235,8 @@ func (u *upstream) pump(body io.ReadCloser, first []byte) {
 				return
 			}
 		}
-		// Whole chunks, so the backlog is the 8 MB it claims: the engine's reads come in a few KB at
-		// a time, and 256 of those filled in the opening burst and dropped the TV the second it began.
+		// Whole chunks, so the backlog is the 8 MB it claims: a few KB per read filled its 256 in the opening
+		// burst and dropped the TV.
 		buf := make([]byte, chunkSize)
 		n, err := io.ReadFull(body, buf)
 		chunk = buf[:n]
@@ -259,7 +253,6 @@ func (u *upstream) pump(body io.ReadCloser, first []byte) {
 	}
 }
 
-// handover is a probed source ready to take over, with what was measured of it.
 type handover struct {
 	up      *upstream
 	samples []swarmSample
@@ -288,7 +281,6 @@ type probeRecord struct {
 	Candidate *reading  `json:"candidate,omitempty"`
 }
 
-// maybeProbe runs after every sample of the playing source.
 func (s *stream) maybeProbe(w *swarm) {
 	if st := w.status(); st != nil && !st.SampledAt.IsZero() {
 		s.mu.Lock()
@@ -343,8 +335,7 @@ func (s *stream) maybeProbe(w *swarm) {
 	go s.probe(s.ctx, cand, current, w, stepUp)
 }
 
-// probe opens cand next to the playing source, samples it, and either hands it to the relay or
-// closes it. Nothing here touches the playing source.
+// Nothing here touches the playing source.
 func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, stepUp bool) {
 	p := s.h.policy
 	start := time.Now()
@@ -372,8 +363,8 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, step
 	}
 	label := s.label + " [probe " + short(cand) + "]"
 	openBy := start.Add(min(s.h.sourceWait, probeOpenWait))
-	// The engine tells players apart by their address unless given a pid, and a player's new
-	// download stops its old one: without it the probe killed the stream it was meant to rescue.
+	// The engine tells players apart by address unless given a pid, and a new download stops a player's
+	// old one: without a pid the probe killed the stream it was meant to rescue.
 	target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-probe-%d", s.h.base, cand, s.h.probes.Add(1))
 	pctx, abandon := context.WithCancel(ctx)
 	handed := false
@@ -451,8 +442,7 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, step
 	s.probed(probeRecord{At: start, Source: cand, Outcome: "switched", Reason: reason, Current: before, Candidate: after})
 }
 
-// sampleProbe reads the candidate's swarm for the probe window, draining its video meanwhile so the
-// engine delivers it as it would to a player. The last sample is taken at the window's end.
+// Drains the candidate's video while sampling, so the engine delivers it as it would to a player.
 func (s *stream) sampleProbe(up *upstream) ([]swarmSample, int64, string) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	ticker := time.NewTicker(s.h.swarmEvery)
@@ -485,8 +475,7 @@ func (s *stream) sampleProbe(up *upstream) ([]swarmSample, int64, string) {
 	}
 }
 
-// switchTo runs in the relay, between two chunks: the old session is closed only once the new one
-// is the one feeding the viewers.
+// Runs in the relay between two chunks; the old session closes only once the new one feeds the viewers.
 func (s *stream) switchTo(old *upstream, h handover) {
 	old.cancel()
 	shift := s.relayed.Load() - h.drained

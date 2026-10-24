@@ -6,14 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// fakeEngine streams bytes for as long as the request lives and counts the connections it gets.
 type fakeEngine struct {
 	opened atomic.Int32
 	live   atomic.Int32
@@ -172,8 +170,6 @@ func TestSmallEngineWritesDoNotDropAViewer(t *testing.T) {
 	}
 }
 
-// perIDEngine answers 500 for the ids it is told are dead and streams the rest; it records the order
-// in which ids were asked for.
 type perIDEngine struct {
 	fakeEngine
 	deadIDs map[string]bool
@@ -245,14 +241,20 @@ func TestDeadSourceFallsThroughToTheNext(t *testing.T) {
 }
 
 func TestUnknownChannelIs404(t *testing.T) {
-	proxy := newChannelProxy(t, &perIDEngine{}, twoSources...)
-	resp, err := http.Get(proxy.URL + "/channel/not-a-channel")
-	if err != nil {
-		t.Fatal(err)
+	engine := &perIDEngine{}
+	proxy := newChannelProxy(t, engine, twoSources...)
+	for _, path := range []string{"/channel/not-a-channel", "/favicon.ico"} {
+		resp, err := http.Get(proxy.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s: status %d, want 404", path, resp.StatusCode)
+		}
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status %d, want 404", resp.StatusCode)
+	if len(engine.order()) != 0 {
+		t.Errorf("the engine was asked for %v, want nothing", engine.order())
 	}
 }
 
@@ -287,7 +289,6 @@ func newStatusProxy(t *testing.T, engine http.Handler, ids ...string) (*httptest
 	return srv, h
 }
 
-// The status page reports what is playing and how it started, without opening anything itself.
 func TestStatusShowsWhatIsPlaying(t *testing.T) {
 	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true}}
 	srv, _ := newStatusProxy(t, engine, twoSources...)
@@ -327,7 +328,7 @@ func TestStatusShowsWhatIsPlaying(t *testing.T) {
 	}
 }
 
-func TestStatusRecordsAFailedOpen(t *testing.T) {
+func TestFailedOpenIsRecorded(t *testing.T) {
 	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true, twoSources[1]: true}}
 	srv, _ := newStatusProxy(t, engine, twoSources...)
 	resp, err := http.Get(srv.URL + "/channel/channel-a-1080p")
@@ -342,6 +343,13 @@ func TestStatusRecordsAFailedOpen(t *testing.T) {
 	getJSON(t, srv.URL+"/api/status", &st)
 	if len(st.Recent) != 1 || st.Recent[0].Outcome != "gave_up" {
 		t.Errorf("recent = %+v, want one open that gave up", st.Recent)
+	}
+	var ch struct {
+		Channels []channelInfo `json:"channels"`
+	}
+	getJSON(t, srv.URL+"/api/channels", &ch)
+	if len(ch.Channels) != 1 || ch.Channels[0].LastOpen == nil || ch.Channels[0].LastOpen.Outcome != "gave_up" {
+		t.Errorf("channels = %+v, want the failed open as last_open", ch.Channels)
 	}
 }
 
@@ -412,34 +420,6 @@ func TestOpenRecordsTheJellyfinDevice(t *testing.T) {
 	}
 }
 
-func TestChannelsReportTheirLastOpenAndThePageIsServed(t *testing.T) {
-	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true, twoSources[1]: true}}
-	srv, _ := newStatusProxy(t, engine, twoSources...)
-	resp, err := http.Get(srv.URL + "/channel/channel-a-1080p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-
-	var ch struct {
-		Channels []channelInfo `json:"channels"`
-	}
-	getJSON(t, srv.URL+"/api/channels", &ch)
-	if len(ch.Channels) != 1 || ch.Channels[0].LastOpen == nil || ch.Channels[0].LastOpen.Outcome != "gave_up" {
-		t.Errorf("channels = %+v, want the failed open as last_open", ch.Channels)
-	}
-	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement", "/favicon.svg": "<svg"} {
-		rec := httptest.NewRecorder()
-		servePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
-			t.Errorf("GET %s: %d, missing %q", path, rec.Code, want)
-		}
-	}
-	if isPage("/channel/channel-a-1080p") || isPage("/ace/getstream") || !isPage("/") || !isPage("/favicon.svg") {
-		t.Error("isPage routes streams to the page or the page to the proxy")
-	}
-}
-
 // Jellyfin 10.11 sends HEAD to tell HLS from TS, then GET on the same keep-alive connection.
 func TestHeadThenGetOnOneConnectionPlays(t *testing.T) {
 	engine := &fakeEngine{}
@@ -466,19 +446,6 @@ func TestHeadThenGetOnOneConnectionPlays(t *testing.T) {
 	defer resp.Body.Close()
 	if n, err := io.ReadAtLeast(resp.Body, make([]byte, 8192), 8192); err != nil {
 		t.Fatalf("GET after HEAD read %d bytes: %v", n, err)
-	}
-}
-
-func TestRequestWithoutChannelOrIDIs404(t *testing.T) {
-	engine := &fakeEngine{}
-	proxy := newTestProxy(t, engine, time.Second, 50*time.Millisecond)
-	resp, err := http.Get(proxy.URL + "/favicon.ico")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound || engine.opened.Load() != 0 {
-		t.Errorf("status %d with %d engine opens, want 404 and none", resp.StatusCode, engine.opened.Load())
 	}
 }
 

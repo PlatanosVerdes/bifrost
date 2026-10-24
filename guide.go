@@ -15,15 +15,12 @@ import (
 	"time"
 )
 
-// The XMLTV guide covers 642 channels and 84,500 programmes; ours are 23 channels and 2% of it.
-// Jellyfin re-parsed all 34 MB on every Refresh Guide, about 2.5 minutes of a Pi 4, so a refresh
-// was something to avoid. It now reads guide.xml, cut down to the channels in the playlist, and a
-// refresh takes seconds: it can follow every real change.
+// Jellyfin re-parsed the full 34 MB guide (642 channels, 23 of them ours) on every refresh, about 2.5
+// minutes of a Pi 4. It reads this cut-down guide.xml instead, so a refresh takes seconds.
 
 var tvgIDAttr = regexp.MustCompile(`tvg-id="([^"]*)"`)
 
-// fetchGuide refreshes the cached full guide when it is older than maxAge. The publisher updates
-// it once a day, so the passes in between reuse the copy on disk.
+// The publisher updates the full guide once a day, so passes in between reuse the copy on disk.
 func fetchGuide(sourceURL, cache string, maxAge time.Duration) (bool, error) {
 	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < maxAge {
 		return false, nil
@@ -51,7 +48,7 @@ func fetchGuide(sourceURL, cache string, maxAge time.Duration) (bool, error) {
 	return true, os.Rename(tmp, cache)
 }
 
-// tvgIDs are the guide channels the playlist refers to, sorted so a set can be compared as a string.
+// Sorted so a set of ids compares as a string.
 func tvgIDs(groups map[string]*channelGroup) []string {
 	seen := map[string]bool{}
 	for _, g := range groups {
@@ -67,8 +64,7 @@ func tvgIDs(groups map[string]*channelGroup) []string {
 	return ids
 }
 
-// trimGuide copies the <channel> and <programme> elements of the wanted ids, token by token, so the
-// full guide is streamed rather than held in memory. Reports whether out changed.
+// Streams the full guide token by token instead of holding it in memory. Reports whether out changed.
 func trimGuide(full, out string, ids []string) (bool, error) {
 	want := map[string]bool{}
 	for _, id := range ids {

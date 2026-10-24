@@ -11,13 +11,15 @@
 | `OUTPUT_FILE` | `/data/channels_ace.m3u` | Jellyfin's playlist; `guide.xml` is written next to it |
 | `STATE_DIR` | `/state` | Run counters, the cached full guide, and `invites.json` (who invited each viewer, which Cloudflare cannot tell) and `join-links.json` (invite links not used yet, by hash) |
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
-| `MAX_WAIT`, `LINGER` | `45s`, `10s` | The legacy `?id=` route's wait; how long a stream outlives its last viewer |
+| `MAX_WAIT` | `45s` | How long the `?id=` route (one content id, no fallback) waits for video |
+| `LINGER` | `10s` | How long a stream outlives its last viewer |
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
 | `SWITCH_AFTER` | `30s` | How long a stream starves before another source is probed; `0` turns switching off |
 | `PROBE_FOR`, `PROBE_COOLDOWN` | `20s`, `3m` | How long a probed source is measured; the wait between two probes of a channel |
 | `ORPHAN_AFTER` | `15m` | Let go a stream only Jellyfin holds once no Jellyfin session has played it for this long; `0` turns it off. Needs `JELLYFIN_URL` |
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](streams.md#moving-to-a-better-source)) |
 | `FFMPEG` | `ffmpeg` | The ffmpeg that remuxes every source so a switch keeps one clock (the image ships a minimal one); `off` relays sources raw |
+| `SLATE` | `on` | The loading and off-air slates played while a channel has no video; `off` plays none: the viewer waits for video or gets a 503. Needs ffmpeg |
 | `RESOLUTION_SWITCH` | `on` | A starving channel may step down to its lower version (same guide id, name differing only in `720p`/`1080p`) and back up; `off` keeps every channel on its own sources |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](sharing.md) |
@@ -50,6 +52,17 @@ knows from the list and from the streams passing through it. A player that goes 
 directly (and so skips the shared connection) can take a channel's current source from
 `/api/channels`.
 
-The metrics keep the names of the service this replaced (`acestream_run_total`,
-`acestream_unique_channels`, `acestream_jellyfin_refresh_http_code`…), pushed under the job
-`acestream_updater`, so existing dashboards and alerts keep working.
+## Metrics
+
+Pushed to `PUSHGATEWAY_URL` with PUT, so a series that disappears is removed. Two jobs, so the two
+PUTs do not wipe each other:
+
+- `acestream_updater`, per list pass: `acestream_run_total`, `acestream_updates_with_changes_total`,
+  `acestream_updates_no_changes_total`, `acestream_update_errors_total`, `acestream_last_run_timestamp`,
+  `acestream_unique_channels`, `acestream_jellyfin_refresh_http_code`,
+  `acestream_jellyfin_last_refresh_timestamp` and `acestream_source_http_code{url}`. They keep the
+  names of the service this replaced, so existing dashboards and alerts keep working.
+- `acestream_streams`, every 5 s for the playing channels, labelled `channel="<slug>"`:
+  `acestream_stream_viewers`, `_peers`, `_download_bytes_per_second`, `_upload_bytes_per_second`,
+  `_bitrate_bytes_per_second`, `_headroom`, `_starving`, and the counters `_stalls_total`,
+  `_source_switches_total` and `_remux_restarts_total`. See [Streams](streams.md#the-swarm).

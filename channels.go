@@ -6,10 +6,8 @@ import (
 	"strings"
 )
 
-// The list republishes the same channels under new content ids several times an hour, and Jellyfin
-// keys a channel on the MD5 of its URL: an id in the URL made every rotation a new channel and a
-// guide refresh. So Jellyfin gets one URL per channel that never changes, and the proxy resolves it
-// against the catalog, which carries the ids of the moment.
+// Jellyfin keys a channel on its URL and the list rotates content ids hourly: one URL per slug, and
+// the proxy resolves it against the current ids.
 
 // sourceMarker is the trailing run of stars that tells sources of one channel apart.
 var sourceMarker = regexp.MustCompile(`\s*\*+$`)
@@ -32,8 +30,6 @@ func slug(name string) string {
 	return strings.Trim(nonSlug.ReplaceAllString(s, "-"), "-")
 }
 
-// groupChannels folds the sources into channels in order of first appearance, with each channel's
-// ids in the order the list gives them.
 func groupChannels(sources []channel) ([]string, map[string]*channelGroup) {
 	var order []string
 	groups := map[string]*channelGroup{}
@@ -56,8 +52,7 @@ func groupChannels(sources []channel) ([]string, map[string]*channelGroup) {
 	return order, groups
 }
 
-// stableM3U lists each channel once, at a URL made of its slug alone, so it only changes when a
-// channel appears or disappears.
+// A URL of the slug alone, so the playlist only changes when a channel appears or disappears.
 func stableM3U(header, channelBaseURL string, order []string, groups map[string]*channelGroup) string {
 	var b strings.Builder
 	b.WriteString(header + "\n")
