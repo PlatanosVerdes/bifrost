@@ -20,9 +20,12 @@ for n in range(N):
     t = n / SR
     swell = 0.35 + 0.65 * math.sin(math.pi * (t % PERIOD) / PERIOD) ** 2  # rises with each bar sweep
     pad = sum(math.sin(2 * math.pi * hz(m) * t + k) for k, m in enumerate(CHORD)) / len(CHORD)
-    pan = 0.15 * math.sin(2 * math.pi * t / PERIOD)
-    L.append(1.6 * noise[n] * swell * (1 - pan) + 0.12 * pad)
-    R.append(1.6 * noise[n] * swell * (1 + pan) + 0.12 * pad)
+    # Follows the lit segment across the bar: left to right each sweep, equal power, easing back.
+    x = (t % PERIOD) / PERIOD
+    pos = x if x < 0.85 else 1 - (x - 0.85) / 0.15
+    left, right = math.cos(pos * math.pi / 2), math.sin(pos * math.pi / 2)
+    L.append(2.2 * noise[n] * swell * left + 0.12 * pad)
+    R.append(2.2 * noise[n] * swell * right + 0.12 * pad)
 peak = max(max(map(abs, L)), max(map(abs, R)))
 scale = 0.25 / peak
 with wave.open(sys.argv[1], "wb") as w:
