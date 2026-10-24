@@ -283,9 +283,9 @@ func pushMetrics(pushURL string, s state, channels []channel, jellyfinCode int,
 	w := func(format string, a ...any) { fmt.Fprintf(&buf, format, a...) }
 
 	w("# HELP acestream_run_total Total executions\n# TYPE acestream_run_total counter\nacestream_run_total %d\n", s.totalRuns)
-	w("# HELP acestream_updates_with_changes Updates with changes\n# TYPE acestream_updates_with_changes counter\nacestream_updates_with_changes %d\n", s.successChanges)
-	w("# HELP acestream_updates_no_changes Executions without changes\n# TYPE acestream_updates_no_changes counter\nacestream_updates_no_changes %d\n", s.successNoChanges)
-	w("# HELP acestream_update_errors Total errors\n# TYPE acestream_update_errors counter\nacestream_update_errors %d\n", s.errors)
+	w("# HELP acestream_updates_with_changes_total Updates with changes\n# TYPE acestream_updates_with_changes_total counter\nacestream_updates_with_changes_total %d\n", s.successChanges)
+	w("# HELP acestream_updates_no_changes_total Executions without changes\n# TYPE acestream_updates_no_changes_total counter\nacestream_updates_no_changes_total %d\n", s.successNoChanges)
+	w("# HELP acestream_update_errors_total Source downloads that failed (each run tries up to three routes to the list)\n# TYPE acestream_update_errors_total counter\nacestream_update_errors_total %d\n", s.errors)
 	w("# HELP acestream_last_run_timestamp Last run timestamp\n# TYPE acestream_last_run_timestamp gauge\nacestream_last_run_timestamp %d\n", time.Now().Unix())
 	w("# HELP acestream_unique_channels Current unique channel count\n# TYPE acestream_unique_channels gauge\nacestream_unique_channels %d\n", len(channels))
 	w("# HELP acestream_jellyfin_refresh_http_code HTTP code from Jellyfin refresh API (0=not called)\n# TYPE acestream_jellyfin_refresh_http_code gauge\nacestream_jellyfin_refresh_http_code %d\n", jellyfinCode)
