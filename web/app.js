@@ -138,9 +138,9 @@ class SourcePicker extends LitElement {
   }
 
   facts(x) {
-    if (!x.seen_at && x.headroom == null) return html`<span class="muted">not tried yet</span>`;
+    if (!x.seen_at && x.headroom == null) return html`<span class="muted">Not tried yet</span>`;
     const tone = x.headroom == null ? "" : swarmTone({ headroom: x.headroom }) || "quick";
-    const bits = [x.outcome === "failed" ? html`<span class="bad">failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
+    const bits = [x.outcome === "failed" ? html`<span class="bad">Failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
       x.height ? `${x.height}p` : "", x.audio, x.peers != null ? plural(x.peers, "peer") : "", hhmm(x.seen_at)].filter(Boolean);
     return bits.map((b, i) => html`${i ? " · " : ""}${b}`);
   }
