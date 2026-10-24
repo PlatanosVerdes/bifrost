@@ -88,7 +88,6 @@ const base = css`
 // --- one block of channels, scrolling on its own ---------------------------------------------
 
 class ChannelGroup extends LitElement {
-  static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false } };
   static styles = [base, css`
     .card { height: 300px; display: flex; flex-direction: column; }
     h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
@@ -101,7 +100,106 @@ class ChannelGroup extends LitElement {
     .state.played, .state.warn, .state.live { color: var(--muted); }
     .air { grid-column: 2 / 4; font-size: 12px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .src { font-family: var(--font-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
+    button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
+    button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    button.src:focus-visible, .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+    .link:hover, .link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+    .ctl { font: inherit; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 0; border-radius: 6px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+    .ctl:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+    .ctl:disabled { color: var(--muted); background: var(--chip); opacity: .7; cursor: default; }
+    dialog { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
+    dialog::backdrop { background: rgba(0, 0, 0, .45); }
+    .sheet { position: relative; padding: 18px; outline: 0; }
+    dialog h3 { margin: 0 32px 2px 0; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--ink); display: block; }
+    dialog p { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+    .panel { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .panel li { border-top: 1px solid var(--line); }
+    .panel li:first-child { border-top: 0; }
+    .panel li.line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; padding: 9px 12px; font-size: 13px; }
+    .line .info { grid-column: 1 / 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .x { position: absolute; top: 12px; right: 12px; font: inherit; font-size: 14px; line-height: 1; color: var(--muted); background: var(--chip); border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+    .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; color: var(--muted); background: var(--chip); }
+    .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
+
+  static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, picks: { state: true }, open: { state: true } };
+
+  constructor() { super(); this.picks = {}; this.open = null; }
+
+  async pick(c, x) {
+    const set = (v) => { this.picks = { ...this.picks, [c.slug]: v }; };
+    set({ id: x.id });
+    try {
+      const r = await fetch(`api/channels/${c.slug}/source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: x.id }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Source ${x.n} did not start`);
+      await this.reload?.();
+      set({ done: x.n });
+      this.open = null;
+      setTimeout(() => set(null), 4000);
+    } catch (e) {
+      set({ id: x.id, error: e.message });
+      setTimeout(() => set(null), 6000);
+    }
+  }
+
+  // Numbered in the playlist's order, so a source keeps its number whichever plays.
+  ranked(c) {
+    return (c.sources?.length ? c.sources : c.ids.map((id) => ({ id }))).map((x, i) => ({ ...x, n: i + 1 }))
+      .sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
+  }
+
+  facts(x) {
+    if (!x.seen_at && x.headroom == null) return html`<span class="muted">not tried yet</span>`;
+    const tone = x.headroom == null ? "" : swarmTone({ headroom: x.headroom }) || "quick";
+    const bits = [x.outcome === "failed" ? html`<span class="bad">failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
+      x.height ? `${x.height}p` : "", x.audio, x.peers != null ? plural(x.peers, "peer") : "", hhmm(x.seen_at)].filter(Boolean);
+    return bits.map((b, i) => html`${i ? " · " : ""}${b}`);
+  }
+
+  best(c) {
+    return this.ranked(c).find((x) => x.id !== c.playing.source && x.outcome !== "failed");
+  }
+
+  switchable(c) { return c.ids.length > 1 && c.playing; }
+
+  quick(c) {
+    if (!this.switchable(c)) return nothing;
+    const pick = this.picks[c.slug], next = this.best(c);
+    if (pick?.id && !pick.error) return html` · <span class="muted">switching…</span>`;
+    if (pick?.error) return html` · <span class="bad">${pick.error}</span>`;
+    if (pick?.done) return html` · <span class="muted">Switched to Source ${pick.done}</span>`;
+    return next ? html` · <button class="link" @click=${() => this.pick(c, next)}>Switch to best</button>` : nothing;
+  }
+
+  count(c) {
+    const n = plural(c.ids.length, "source");
+    return this.switchable(c)
+      ? html`<button class="src" aria-haspopup="dialog" @click=${() => { this.open = c.slug; }}>${n}</button>`
+      : html`<span class="src">${n}</span>`;
+  }
+
+  popup() {
+    const c = this.channels.find((x) => x.slug === this.open);
+    const pick = c && this.picks[c.slug], pending = pick?.id && !pick.error;
+    return html`<dialog aria-label="Sources of ${c?.name ?? ""}" @close=${() => { this.open = null; }} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
+      ${c?.playing ? html`<div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><p>Pick a source for this channel. Everyone watching it switches too.</p>
+        <ul class="panel">${this.ranked(c).map((x, i) => {
+          const on = x.id === c.playing.source, mine = pick?.id === x.id;
+          return html`<li class="line">
+            <span><b>Source ${x.n}</b>${i === 0 && x.headroom != null ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}</span>
+            ${on ? html`<span class="tag on">Playing</span>`
+              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.pick(c, x)}>${mine && pending ? "switching…" : "Play"}</button>`}
+            <span class="info">${this.facts(x)}</span></li>`;
+        })}</ul></div>` : nothing}
+    </dialog>`;
+  }
+
+  updated() {
+    const d = this.renderRoot.querySelector("dialog");
+    if (this.open && this.channels.some((c) => c.slug === this.open && c.playing) && !d.open) d.showModal();
+    else if (!this.open && d.open) d.close();
+  }
 
   render() {
     return html`<section class="card">
@@ -111,11 +209,12 @@ class ChannelGroup extends LitElement {
         return html`<li>
           <i class="dot ${st.tone}" aria-hidden="true"></i>
           <span class="name">${c.name}</span>
-          <span class="src">${plural(c.ids.length, "source")}</span>
+          ${this.count(c)}
           ${c.now ? html`<span class="air" title="${c.now.title}, until ${hhmm(c.now.stop)}">${c.now.title} · until ${hhmm(c.now.stop)}</span>` : nothing}
-          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}</span>
+          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}${this.quick(c)}</span>
         </li>`;
       })}</ul>
+      ${this.popup()}
     </section>`;
   }
 }
@@ -124,7 +223,7 @@ customElements.define("channel-group", ChannelGroup);
 // --- the Channels tab: search, legend, the groups ---------------------------------------------
 
 class ChannelBoard extends LitElement {
-  static properties = { channels: { attribute: false }, jellyfin: { attribute: false }, query: { state: true } };
+  static properties = { channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false }, query: { state: true } };
   static styles = [base, css`
     .tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
     input { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 8px 12px; width: min(100%, 300px); }
@@ -161,7 +260,7 @@ class ChannelBoard extends LitElement {
         </div>
       </div>
       ${groups.length
-        ? html`<div class="groups">${groups.map((g) => html`<channel-group .name=${g.name} .channels=${g.channels} .jellyfin=${this.jellyfin}></channel-group>`)}</div>`
+        ? html`<div class="groups">${groups.map((g) => html`<channel-group .name=${g.name} .channels=${g.channels} .jellyfin=${this.jellyfin} .reload=${this.reload}></channel-group>`)}</div>`
         : html`<p class="empty">${this.channels.length ? "No channel matches." : "No channel list yet."}</p>`}`;
   }
 }
@@ -568,7 +667,7 @@ class BifrostApp extends LitElement {
       </div>
       ${this.view === "activity"
         ? html`<activity-view .status=${s}></activity-view>`
-        : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []}></channel-board>`}
+        : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
       <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 10 s.</p>
     </div>`;

@@ -98,6 +98,14 @@ Each playing stream in `/api/status` carries:
 | `last_switch` | When, from and to which source, why, and the headroom before and after |
 | `last_probe` | The last probe: when, which source, `switched` or `kept`, why, and both readings |
 
+### Picking a source by hand
+
+Sources of one channel can carry different audio. On the page, a playing channel with several
+sources shows its count as a button: it opens the channel's sources, best first by what was last
+seen of each, with a Play button each, and the state line offers "Switch to best". Either moves
+everyone watching it, through the same remuxed handover; a source that does not start leaves the
+stream where it was.
+
 ## Streams nobody watches
 
 Jellyfin can lose track of a session and keep pulling a channel with nobody in front of it: a TV

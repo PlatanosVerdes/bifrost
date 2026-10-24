@@ -86,6 +86,7 @@ func routes(h *hub, acc *access) *http.ServeMux {
 	})
 	mux.HandleFunc("/api/status", guarded(h.serveStatus))
 	mux.HandleFunc("/api/channels", guarded(h.serveChannels))
+	mux.HandleFunc("POST /api/channels/{slug}/source", guarded(h.servePick))
 	mux.HandleFunc("/api/access", guarded(acc.serve))
 	mux.HandleFunc("/api/access/members", guarded(acc.serveMembers))
 	mux.HandleFunc("/api/access/links", guarded(acc.serveLinks))
