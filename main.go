@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -33,6 +34,7 @@ func main() {
 	h.policy.minHeadroom = getfloat("SWITCH_MIN_HEADROOM", h.policy.minHeadroom)
 	h.policy.margin = getfloat("SWITCH_MARGIN", h.policy.margin)
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
+	h.ffmpeg = findFFmpeg(getenv("FFMPEG", "ffmpeg"))
 
 	if after := getduration("ORPHAN_AFTER", 15*time.Minute); after > 0 && h.jellyfinURL != "" {
 		go h.closeOrphans(time.Minute, after)
@@ -59,6 +61,19 @@ func main() {
 	// No WriteTimeout: a stream answer lasts as long as the match.
 	srv := &http.Server{Addr: cfg.listenAddr, Handler: routes(h, newAccess(cfg)), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
+}
+
+// findFFmpeg answers "" to relay sources raw: FFMPEG=off, or no ffmpeg where it points.
+func findFFmpeg(name string) string {
+	if name == "off" {
+		return ""
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		log.Printf("[proxy] no ffmpeg (%v): sources are relayed raw, and a switch may freeze some players", err)
+		return ""
+	}
+	return path
 }
 
 func routes(h *hub, acc *access) *http.ServeMux {

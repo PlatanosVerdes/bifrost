@@ -10,11 +10,25 @@ COPY web/ ./web/
 # Static binary: the runtime image has no libc to link against.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost .
 
+# Only what `ffmpeg -c copy` needs to remux MPEG-TS through a pipe: a few MB instead of Alpine's ~80.
+FROM alpine:3.21 AS ffmpeg
+ARG FFMPEG_VERSION=7.1.1
+RUN apk add --no-cache build-base curl
+RUN curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar -xJ
+WORKDIR /ffmpeg-${FFMPEG_VERSION}
+RUN ./configure --disable-everything --disable-autodetect --disable-network --disable-doc --disable-debug \
+        --disable-ffplay --disable-ffprobe --enable-small --disable-shared --enable-static --extra-ldflags=-static \
+        --enable-protocol=pipe --enable-demuxer=mpegts --enable-muxer=mpegts \
+        --enable-parser=h264,hevc,aac,aac_latm,ac3,mpegaudio,mpegvideo \
+        --enable-decoder=h264,hevc,aac,aac_latm,ac3,eac3,mp2,mp3,mpeg2video \
+    && make -j"$(nproc)" ffmpeg && strip ffmpeg && cp ffmpeg /ffmpeg
+
 FROM alpine:3.21
 
 # The list comes from IPFS gateways and the guide from GitHub, both over HTTPS.
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /out/bifrost /usr/local/bin/bifrost
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 
 # Owned by the user below so fresh named volumes are writable; bind mounts need the same owner on
 # the host, or `user:` set to the host folder's owner.
