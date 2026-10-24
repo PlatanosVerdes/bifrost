@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// Made by slate/render.py: 24 s of the bifrost wordmark bouncing, ending where it starts.
+// Made by slate/render.py.
 //
 //go:embed slate/offair.ts
 var offairTS []byte
 
-// Made by slate/loading.py: what a channel shows while its sources are first tried.
+// Made by slate/loading.py.
 //
 //go:embed slate/loading.ts
 var loadingTS []byte

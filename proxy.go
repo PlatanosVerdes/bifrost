@@ -17,29 +17,23 @@ import (
 
 const (
 	retryInterval = 2 * time.Second
-	logEvery      = 10 * time.Second // progress lines, so a 45s wait is 4 lines and not 22
+	logEvery      = 10 * time.Second
 	firstReadSize = 64 * 1024
 	chunkSize     = 32 * 1024
-	// Chunks a viewer may fall behind before it is dropped: 8 MB, about 9 s of a 7 Mbit/s channel.
-	// The chunks are shared, so this bounds memory per channel, not per viewer.
+	// A viewer this far behind (8 MB, about 9 s of a 7 Mbit/s channel) is dropped. Chunks are shared, so
+	// this bounds memory per channel, not per viewer.
 	viewerBacklog = 256
 )
 
-// Aceserve answers 302 within half a second for every content id, whether or not a swarm exists,
-// so its status code says nothing about whether the channel will play. The only honest signal is
-// video actually arriving, which is what this waits for. Without it a dead channel leaves the
-// player spinning forever with no error and nothing in the log.
-//
-// One upstream per channel, shared by every viewer. The engine serves a channel to one connection
-// at a time, and Jellyfin opens two at once, one to play and one to probe the codecs: the probe got
-// the 500, Jellyfin transcoded blind, and a Pi 4 re-encodes 1080p at half real time.
+// One upstream per channel, shared: the engine serves one connection per channel, and Jellyfin's codec
+// probe got a 500 and made it transcode blind, at half real time on a Pi 4.
 type hub struct {
 	base    string
 	maxWait time.Duration
 	linger  time.Duration
 	client  *http.Client
 
-	// /channel/<slug>: one stable URL per channel, tried source by source. Below Jellyfin's 100 s.
+	// channelWait stays below Jellyfin's 100 s timeout.
 	table       *catalog
 	sourceWait  time.Duration
 	channelWait time.Duration
@@ -50,7 +44,7 @@ type hub struct {
 	status   *statusBoard
 
 	jellyfinURL, jellyfinKey string // only for /api/status to ask how Jellyfin is playing
-	name                     string // the machine, shown on the page
+	name                     string
 	schedule                 *schedule
 	swarmEvery               time.Duration
 
@@ -65,16 +59,15 @@ type hub struct {
 
 	ffmpeg  string // remuxes every source when set; empty relays sources raw
 	slate   *slate // played once a channel's sources have all failed; needs ffmpeg
-	loading *slate // played while they are first tried
-	ladder  bool   // a starving channel may step down to its lower versions' sources
+	loading *slate
+	ladder  bool // a starving channel may step down to its lower versions' sources
 }
 
-// plan is what a request resolves to: the sources to try, in order, for one shared stream.
 type plan struct {
 	key       string
 	label     string
 	slug      string
-	sources   []string // content ids
+	sources   []string
 	budget    time.Duration
 	perSource time.Duration
 }
@@ -150,8 +143,7 @@ func (h *hub) label(id string) string {
 	return short(id)
 }
 
-// active lists the channels someone is watching right now, so the list loop does not take one away
-// from Jellyfin in the middle of a match just because the list skipped it for a pass.
+// active lists the channels being watched, so the list loop does not drop one mid-match.
 func (h *hub) active() map[string]bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -233,7 +225,6 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// join returns the channel's stream, starting it if nobody is on it yet, plus a fresh viewer queue.
 func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	viewer := make(chan []byte, viewerBacklog)
 	h.mu.Lock()
@@ -269,7 +260,7 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	return s, viewer, false
 }
 
-// run tries the plan's sources one at a time, never two at once: the Pi plays one channel.
+// Sources are tried one at a time: the Pi plays one channel.
 func (s *stream) run(ctx context.Context, p plan, headers http.Header) {
 	defer s.finish()
 	start := time.Now()
@@ -477,8 +468,7 @@ func (c *cutover) feedFrom(src *found) <-chan []byte {
 	return c.mux.feed(src.up.chunks)
 }
 
-// relay hands the source's chunks to the viewers, packet-aligned, until a probe hands over a better
-// source: from then on the same viewers get that one, and the old session is closed.
+// relay serves viewers from up until a probe hands over a better source, then closes the old session.
 func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 	s.relayFrom(ctx, up, start, &tsAligner{}, newRebaser(), s.remux(ctx, up))
 }
@@ -589,7 +579,7 @@ func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, a
 	}
 }
 
-// nil relays the source raw, as before remuxing.
+// Returns nil when ffmpeg is off or does not start, and the source is relayed raw.
 func (s *stream) remux(ctx context.Context, up *upstream) *remux {
 	if s.h.ffmpeg == "" {
 		return nil
@@ -666,8 +656,7 @@ func (c *cutover) abandon(reason string) {
 	c.h.outcome <- reason
 }
 
-// broadcast never blocks on a viewer: one that fell a whole backlog behind is dropped, so a stalled
-// client cannot freeze the channel for everyone else.
+// A viewer a whole backlog behind is dropped so a stalled client cannot freeze the channel.
 func (s *stream) broadcast(chunk []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -683,14 +672,12 @@ func (s *stream) broadcast(chunk []byte) {
 	}
 }
 
-// leave lets the upstream go once the last viewer has been gone for the linger period: Jellyfin
-// closes and reopens within seconds when it switches from probing to playing.
+// The upstream is released after the linger period: Jellyfin reopens within seconds when it goes
+// from probing to playing.
 func (s *stream) leave(viewer chan []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.viewers[viewer]; ok {
-		delete(s.viewers, viewer)
-	}
+	delete(s.viewers, viewer)
 	delete(s.direct, viewer)
 	if len(s.viewers) > 0 || s.done || s.idle != nil {
 		return
@@ -726,7 +713,7 @@ func (s *stream) finish() {
 	s.cancel()
 }
 
-// noteDirect remembers a viewer that is not Jellyfin. Called with s.mu held, or before s is shared.
+// Called with s.mu held, or before s is shared.
 func (s *stream) noteDirect(viewer chan []byte, r *http.Request) {
 	if fromJellyfin(r) {
 		return
@@ -749,9 +736,8 @@ func (s *stream) count() int {
 	return len(s.viewers)
 }
 
-// Aceserve answers 500 while it cannot get a stream going at all, which covers both an engine
-// still starting and a content id it fails to resolve. Either is worth retrying. Anything else is
-// answered straight away and judged on whether video follows.
+// Aceserve answers 500 while the engine starts or an id will not resolve: retried. Any other status
+// is judged on whether video follows.
 func open(ctx context.Context, client *http.Client, target string, headers http.Header, ch string, deadline time.Time) (*http.Response, bool) {
 	var lastLog time.Time
 	for {
@@ -789,8 +775,8 @@ func open(ctx context.Context, client *http.Client, target string, headers http.
 	}
 }
 
-// Reads in its own goroutine so the wait can be reported while it blocks. Closing the body on the
-// way out unblocks that read, and the channel is buffered so it never leaks.
+// Aceserve answers 302 for every id whether or not a swarm exists, so only arriving video says a
+// channel plays. Reads in its own goroutine so the wait can be reported; closing the body unblocks it.
 func awaitFirstBytes(ctx context.Context, body io.Reader, ch string, start, deadline time.Time) ([]byte, bool) {
 	type result struct {
 		buf []byte
@@ -828,7 +814,7 @@ func awaitFirstBytes(ctx context.Context, body io.Reader, ch string, start, dead
 	}
 }
 
-// tenths is a duration in seconds to one decimal, so a start under a second does not read as 0.
+// Rounded to 0.1 s so a start under a second does not read as 0.
 func tenths(d time.Duration) float64 {
 	return math.Round(d.Seconds()*10) / 10
 }

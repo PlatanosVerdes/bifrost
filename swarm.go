@@ -17,16 +17,12 @@ import (
 	"time"
 )
 
-// The engine's live statistics for a running stream. Aceserve redirects /ace/getstream to
-// /ace/r/<infohash>/<session>, and /ace/stat/<infohash>/<session> answers peers and speeds for that
-// same playback: reading it changes nothing about the stream, so bifrost can watch a channel
-// without opening a second session. The engine does not say the stream's bitrate, so it is measured
-// from the bytes bifrost relays.
+// /ace/stat/<infohash>/<session> gives peers and speeds without a second session; the engine gives no
+// bitrate, so it is measured from the bytes relayed.
 
 const (
 	swarmHistory = 24 // samples kept per stream: two minutes at the default poll
-	// The bitrate is measured over this much of the history.
-	swarmSpan = 60 * time.Second
+	swarmSpan    = 60 * time.Second
 	// Samples in a row with the download under the bitrate before a stream counts as starving: one
 	// slow sample is the engine's speed jittering, three are its buffer draining.
 	starvingAfter = 3
@@ -36,7 +32,7 @@ const (
 // The bitrate is not measured before the samples span this much. A variable only for the tests.
 var swarmMinSpan = 10 * time.Second
 
-// engineStat is the part of the engine's stat answer worth keeping. Speeds are in KiB/s.
+// Speeds are in KiB/s.
 type engineStat struct {
 	Status     string `json:"status"` // prebuf, dl, check, wait…
 	Peers      int    `json:"peers"`
@@ -65,7 +61,6 @@ func parseStat(body []byte) (engineStat, error) {
 	return *answer.Response, nil
 }
 
-// statURL finds the engine session behind a stream in its redirect chain.
 func statURL(resp *http.Response) string {
 	for req := resp.Request; req != nil; {
 		if rest, ok := strings.CutPrefix(req.URL.Path, "/ace/r/"); ok {
@@ -90,7 +85,6 @@ type swarmSample struct {
 	relayed int64   // bytes bifrost had relayed by then
 }
 
-// swarmStatus is what /api/status says about a stream's swarm.
 type swarmStatus struct {
 	Status      string    `json:"status"`
 	Peers       int       `json:"peers"`
@@ -166,7 +160,6 @@ func (w *swarm) stalledSoFar() int {
 	return w.stalls
 }
 
-// reading averages the samples taken since a moment, against the stream's bitrate.
 func (w *swarm) reading(since time.Time) reading {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -205,9 +198,8 @@ func (w *swarm) status() *swarmStatus {
 	return st
 }
 
-// bitrate is the stream's rate in bytes per second: the bytes relayed over the last minute, divided by how far
-// the engine's live position moved in it. Wall time would do while the swarm keeps up, but a
-// starving engine relays slower than the stream plays, and the bitrate would sink with the download.
+// bitrate is the bytes relayed over the last minute divided by how far the engine's live position moved:
+// wall time would sink with the download when the engine starves.
 func bitrate(samples []swarmSample) float64 {
 	if len(samples) < 2 {
 		return 0
@@ -232,7 +224,6 @@ func bitrate(samples []swarmSample) float64 {
 	return float64(last.relayed-first.relayed) / seconds
 }
 
-// watchSwarm polls the engine's stat for as long as the source plays.
 func (s *stream) watchSwarm(ctx context.Context, url string, w *swarm) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	ticker := time.NewTicker(s.h.swarmEvery)
@@ -297,7 +288,6 @@ func fetchStat(ctx context.Context, client *http.Client, url string) (swarmSampl
 	return sample, nil
 }
 
-// swarmMetrics writes one gauge per playing channel in the pushgateway's text format.
 func swarmMetrics(streams []streamStatus) []byte {
 	var buf bytes.Buffer
 	sort.Slice(streams, func(i, j int) bool { return streams[i].Slug < streams[j].Slug })
@@ -345,9 +335,8 @@ func boolGauge(b bool) float64 {
 	return 0
 }
 
-// pushSwarm sends the playing channels' gauges on every poll. PUT replaces the whole group, so a
-// channel nobody watches any more disappears instead of keeping its last values; the group is its
-// own job so this and the list loop's PUT do not wipe each other.
+// PUT replaces the whole group, so a channel nobody watches disappears. The group is its own job so
+// this and the list loop's PUT do not wipe each other.
 func (h *hub) pushSwarm(pushURL string) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	idle := false

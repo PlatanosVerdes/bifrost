@@ -35,8 +35,6 @@ func TestLowerListsOnlyTheSameChannelsLowerVersions(t *testing.T) {
 	}
 }
 
-// A starving 1080p channel steps down to its 720p version's source, tells the TV, and steps back
-// up once its own source keeps up clearly.
 func TestStarvingChannelStepsDownAndBackUp(t *testing.T) {
 	engine := newSourceEngine(map[string]int{slowSource: 100, fastSource: 4000})
 	srv, h := newSwitchingProxy(t, engine, slowSource)
