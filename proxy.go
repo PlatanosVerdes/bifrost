@@ -63,8 +63,9 @@ type hub struct {
 	facts         map[string]*sourceFacts // content id -> what was last seen of it
 	probes        atomic.Int64
 
-	ffmpeg string // remuxes every source when set; empty relays sources raw
-	slate  *slate // played while a channel has no video; needs ffmpeg
+	ffmpeg  string // remuxes every source when set; empty relays sources raw
+	slate   *slate // played once a channel's sources have all failed; needs ffmpeg
+	loading *slate // played while they are first tried
 }
 
 // plan is what a request resolves to: the sources to try, in order, for one shared stream.
@@ -366,7 +367,11 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 	close(s.ready)
 	log.Printf("[proxy] %s playing the slate while it looks for video", s.label)
 	reb := newRebaser()
-	player := &slatePlayer{sl: s.h.slate}
+	player := &slatePlayer{sl: s.h.loading, lead: slateLead}
+	if player.sl == nil {
+		player.sl = s.h.slate
+	}
+	spliceNext := false
 	tick := time.NewTicker(slateTick)
 	defer tick.Stop()
 	results := make(chan *found, 1)
@@ -395,9 +400,13 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 		select {
 		case now := <-tick.C:
 			if b, fresh := player.next(now); len(b) > 0 {
-				if fresh && player.sent > int64(len(b)) {
+				switch {
+				case spliceNext:
+					spliceNext = false
+					s.broadcast(reb.splice(b))
+				case fresh && player.sent > int64(len(b)):
 					s.broadcast(reb.advance(player.sl.ticks, b))
-				} else {
+				default:
 					s.broadcast(reb.push(b))
 				}
 			}
@@ -407,6 +416,9 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 					s.gaveUp(ctx, start)
 					log.Printf("[proxy] %s keeps the slate, looking again every %s", s.label, slateRetry)
 					gaveUp = true
+					if player.sl != s.h.slate {
+						player, spliceNext = &slatePlayer{sl: s.h.slate}, true
+					}
 				}
 				retry = time.After(slateRetry)
 				continue

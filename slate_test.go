@@ -32,7 +32,7 @@ func TestSlatePlayerKeepsRealTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &slatePlayer{sl: sl}
+	p := &slatePlayer{sl: sl, lead: slateLead}
 	t0 := time.Unix(1000, 0)
 	first, fresh := p.next(t0)
 	rate := float64(len(sl.loop)) / sl.duration.Seconds()
@@ -80,6 +80,9 @@ func TestSlateHandsOverToTheFirstSourceThatDelivers(t *testing.T) {
 	srv, h := newSwitchingProxy(t, engine, slowSource)
 	h.ffmpeg = bin
 	if h.slate, err = newSlate(offairTS); err != nil {
+		t.Fatal(err)
+	}
+	if h.loading, err = newSlate(loadingTS); err != nil {
 		t.Fatal(err)
 	}
 	h.sourceWait, h.channelWait = 300*time.Millisecond, 300*time.Millisecond

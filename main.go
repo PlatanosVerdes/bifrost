@@ -41,6 +41,9 @@ func main() {
 			log.Fatalf("the embedded slate: %v", err)
 		}
 		h.slate = sl
+		if h.loading, err = newSlate(loadingTS); err != nil {
+			log.Fatalf("the embedded loading slate: %v", err)
+		}
 	}
 
 	if after := getduration("ORPHAN_AFTER", 15*time.Minute); after > 0 && h.jellyfinURL != "" {
