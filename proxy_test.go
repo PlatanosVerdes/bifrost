@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// fakeEngine streams bytes for as long as the request lives and counts the connections it gets.
 type fakeEngine struct {
 	opened atomic.Int32
 	live   atomic.Int32
@@ -171,8 +170,6 @@ func TestSmallEngineWritesDoNotDropAViewer(t *testing.T) {
 	}
 }
 
-// perIDEngine answers 500 for the ids it is told are dead and streams the rest; it records the order
-// in which ids were asked for.
 type perIDEngine struct {
 	fakeEngine
 	deadIDs map[string]bool
@@ -292,7 +289,6 @@ func newStatusProxy(t *testing.T, engine http.Handler, ids ...string) (*httptest
 	return srv, h
 }
 
-// The status page reports what is playing and how it started, without opening anything itself.
 func TestStatusShowsWhatIsPlaying(t *testing.T) {
 	engine := &perIDEngine{deadIDs: map[string]bool{twoSources[0]: true}}
 	srv, _ := newStatusProxy(t, engine, twoSources...)

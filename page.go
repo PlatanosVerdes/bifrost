@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// The status page: index.html, its Lit components in app.js, and Lit itself under vendor/, pinned
-// and served from here so the page needs nothing but this process. It only reads the API.
+// Lit is vendored under web/vendor so the page needs nothing but this process.
 //
 //go:embed web
 var webFS embed.FS
@@ -22,7 +21,6 @@ var webFiles = func() http.Handler {
 	return http.FileServer(http.FS(sub))
 }()
 
-// isPage says whether a path belongs to the page rather than to a stream.
 func isPage(path string) bool {
 	return path == "/" || path == "/app.js" || path == "/favicon.svg" || strings.HasPrefix(path, "/vendor/")
 }

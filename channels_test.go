@@ -47,7 +47,7 @@ func TestSourcesFoldIntoChannels(t *testing.T) {
 	}
 }
 
-// The whole point: new ids for the same channels must leave Jellyfin's playlist byte for byte.
+// New ids for the same channels must leave the playlist byte for byte.
 func TestRotatedIDsLeaveThePlaylistAlone(t *testing.T) {
 	before, _ := build(t, sample)
 	rotated := strings.NewReplacer(

@@ -73,8 +73,6 @@ func newCloudflareAccess(team, aud, account, token string) *cloudflareAccess {
 	}
 }
 
-// --- who is looking: the JWT ---------------------------------------------------------------------
-
 func (c *cloudflareAccess) viewer(r *http.Request) (viewer, error) {
 	return c.identity(r, c.aud)
 }
@@ -172,7 +170,6 @@ func decodeSegment(seg string, v any) error {
 	return json.Unmarshal(b, v)
 }
 
-// key returns the team's signing key by kid, fetching the keys again when Cloudflare has rotated them.
 // The fetch runs outside the lock: any caller can ask for an unknown kid, and known ones must not wait.
 func (c *cloudflareAccess) key(kid string) (*rsa.PublicKey, error) {
 	c.keysMu.Lock()
@@ -241,8 +238,6 @@ func (c *cloudflareAccess) fetchKeys() (map[string]*rsa.PublicKey, error) {
 	}
 	return keys, nil
 }
-
-// --- this instance's app and groups: the API ----------------------------------------------------
 
 // Group members are not cached: they are read fresh on every request.
 type cfSnapshot struct {
@@ -500,7 +495,7 @@ func (c *cloudflareAccess) loadSite(ctx context.Context) (site, error) {
 	return out, nil
 }
 
-// parallel runs every job at once: each Cloudflare call is a round trip of most of a second.
+// Each Cloudflare call is a round trip of most of a second, so the jobs run at once.
 func parallel(jobs ...func() error) error {
 	errs := make([]error, len(jobs))
 	var wg sync.WaitGroup
@@ -617,7 +612,6 @@ func (c *cloudflareAccess) group(ctx context.Context, id string) (cfGroup, error
 	return g, nil
 }
 
-// list reads every page of an account listing.
 func (c *cloudflareAccess) list(ctx context.Context, path string, into any) error {
 	var all []json.RawMessage
 	for page := 1; ; page++ {

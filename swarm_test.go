@@ -134,8 +134,6 @@ func TestSwarmMetricsPerChannel(t *testing.T) {
 	}
 }
 
-// redirectingEngine answers like aceserve: getstream redirects to the session, the session to the
-// content, and the session's stat says how the swarm is doing.
 type redirectingEngine struct{ fakeEngine }
 
 func (e *redirectingEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {

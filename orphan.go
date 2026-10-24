@@ -7,11 +7,9 @@ import (
 	"time"
 )
 
-// Jellyfin can lose track of a session and keep pulling a channel nobody watches: a TV cut off by a
-// restart reopens it, and its later stop is applied to the old session. The engine then downloads a
-// match for nobody. A channel whose every viewer is Jellyfin is let go once Jellyfin has reported
-// nobody playing it for orphanAfter in a row; any doubt (Jellyfin unreachable, a viewer that is not
-// Jellyfin) keeps it open.
+// Jellyfin can lose track of a session and keep pulling a channel nobody watches (a TV cut off by a
+// restart reopens it, and its later stop hits the old session). A channel whose every viewer is Jellyfin
+// is let go after orphanAfter without a Jellyfin session playing it; any doubt keeps it open.
 
 func fromJellyfin(r *http.Request) bool {
 	return strings.Contains(r.UserAgent(), "Jellyfin")
@@ -28,7 +26,6 @@ func client(r *http.Request) string {
 	return "direct"
 }
 
-// orphans tracks since when each stream has gone without a Jellyfin session playing it.
 type orphans struct {
 	after  time.Duration
 	unseen map[*stream]time.Time

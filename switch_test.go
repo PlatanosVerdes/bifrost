@@ -55,7 +55,7 @@ func TestJudgeSwitchesOnlyToAClearlyBetterSource(t *testing.T) {
 		starving  bool
 		want      bool
 	}{
-		// Tonight: the playing source at 0.8x while another delivered twice the bitrate.
+		// A real case: the playing source at 0.8x while another delivered twice the bitrate.
 		{"twice the bitrate", cur(0.8), cand(1.9, 25), true, true},
 		{"keeps up, clear margin", cur(0.8), cand(1.15, 18), true, true},
 		{"keeps up, not by the margin", cur(0.95), cand(1.1, 18), true, false},
@@ -64,7 +64,7 @@ func TestJudgeSwitchesOnlyToAClearlyBetterSource(t *testing.T) {
 		{"thin swarm needs twice the margin", cur(0.8), cand(1.15, 5), true, false},
 		{"thin swarm, far better", cur(0.8), cand(1.6, 5), true, true},
 		{"the playing one recovered", cur(1.0), cand(1.9, 25), false, false},
-		// 2026-10-23, F1: the playing source flapped around 0.85x on 2 peers and was between two starves.
+		// A real case: the playing source flapped around 0.85x on 2 peers and was between two starves.
 		{"recovered for now, short on average", reading{Headroom: 0.85, Peers: 2, Samples: 6}, cand(1.4, 4), false, true},
 		{"stalled candidate", cur(0.8), reading{Headroom: 1.9, Peers: 25, Samples: 3, Stalled: true}, true, false},
 		{"too few samples", cur(0.8), reading{Headroom: 1.9, Peers: 25, Samples: 1}, true, false},
@@ -181,11 +181,9 @@ func TestAlignerHandsOutWholePackets(t *testing.T) {
 	}
 }
 
-// sourceEngine plays each content id as TS packets marked with the id's first letter, through
-// aceserve's redirect to a session, and answers that session's stat with the download set for it.
-// Like aceserve, a player's new download stops its previous one, a player being its pid if it
-// gives one and its address otherwise, and a redirect has no length and ends only if the client
-// asked to close the connection.
+// sourceEngine marks each id's TS packets with its first letter and behaves like aceserve: a redirect
+// to a session, a new download from the same pid (or address) stops the previous one, and a redirect
+// ends only if the client asked to close.
 type sourceEngine struct {
 	mu      sync.Mutex
 	down    map[string]int // KiB/s
@@ -323,8 +321,7 @@ func newSwitchingProxy(t *testing.T, engine http.Handler, ids ...string) (*httpt
 	return srv, h
 }
 
-// watch reads the channel for d, checking that every packet arrives whole, and returns the markers
-// in the order they played.
+// watch reads the channel for d, checking every packet arrives whole, and returns the markers in play order.
 func watch(t *testing.T, url string, d time.Duration, until func(markers string) bool) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)

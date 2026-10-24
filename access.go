@@ -23,7 +23,6 @@ type accessProvider interface {
 	// joiner is anyone signed in through the join app, on a list or not.
 	joiner(r *http.Request) (viewer, error)
 	site(ctx context.Context, v viewer) (site, error)
-	// add returns the emails that were not on the list yet.
 	add(ctx context.Context, v viewer, list string, emails []string) ([]string, error)
 	remove(ctx context.Context, v viewer, list, email string) error
 }
@@ -228,7 +227,6 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.adminPayload(v, s))
 }
 
-// serveLinks makes a join link for one list (POST {"group"}) or takes one back (DELETE {"id"}).
 func (a *access) serveLinks(w http.ResponseWriter, r *http.Request) {
 	v, s, ok := a.adminRequest(w, r)
 	if !ok {
@@ -262,7 +260,7 @@ func (a *access) serveLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// serveJoin lets in whoever opens a join link, once: the link stands in for an admin typing their address.
+// The link stands in for an admin typing the address.
 func (a *access) serveJoin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		joinPage(w, http.StatusMethodNotAllowed, "Open the link in a browser", "")

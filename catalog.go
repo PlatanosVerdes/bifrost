@@ -2,9 +2,7 @@ package main
 
 import "sync"
 
-// catalog is the channel table both halves share: the list loop replaces it whole on every pass,
-// and the proxy reads it on every request. Replacing it whole is what makes a dropped id disappear
-// at once instead of lingering.
+// The list loop replaces the catalog whole each pass, so a dropped id disappears at once.
 type catalog struct {
 	mu     sync.RWMutex
 	order  []string

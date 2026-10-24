@@ -12,14 +12,13 @@ import (
 	"time"
 )
 
-// A channel's 720p and 1080p versions are separate playlist entries with the same guide id. When
-// none of its own sources keeps up, a starving channel may step down to a lower version's source,
-// and steps back up once its own measures clearly better: never to another channel.
+// A channel's 720p and 1080p versions are separate entries with the same guide id. A starving channel
+// steps down to a lower version's source and back up once its own measures clearly better, never to
+// another channel.
 
 var (
 	resolutionSuffix = regexp.MustCompile(`(?i)\s+(\d{3,4}p|4k)$`)
-	// How long a stepped-down stream plays before its own channel is measured again, and what that
-	// needs to step back up: more than just keeping up, so it does not go straight back down.
+	// Back up only on clear headroom, so a step does not bounce straight down again.
 	stepUpAfter    = 5 * time.Minute
 	stepUpHeadroom = 1.3
 )
@@ -65,7 +64,6 @@ func (c *catalog) lower(slug string) []string {
 	return ids
 }
 
-// heightOf is the resolution of the channel a source is listed under.
 func (c *catalog) heightOf(id string) int {
 	return height(c.nameOf(id))
 }

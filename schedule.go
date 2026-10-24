@@ -11,14 +11,13 @@ import (
 	"time"
 )
 
-// airing is one programme of the guide, as the page shows it.
 type airing struct {
 	Title string    `json:"title"`
 	Start time.Time `json:"start"`
 	Stop  time.Time `json:"stop"`
 }
 
-// schedule is guide.xml held in memory: it is already cut down to our channels, a few hundred KB.
+// schedule is guide.xml in memory; it is already cut down to our channels.
 type schedule struct {
 	mu        sync.RWMutex
 	byChannel map[string][]airing // guide channel id -> its programmes, by start time

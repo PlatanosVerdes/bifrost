@@ -16,15 +16,14 @@ import (
 	"time"
 )
 
-// qualitySuffix strips resolution and source markers from channel names.
-// e.g. "M+ Liga de Campeones 1080p **" → "M+ Liga de Campeones"
+// qualitySuffix strips resolution and source markers: "M+ Liga de Campeones 1080p **" -> "M+ Liga de Campeones".
 var qualitySuffix = regexp.MustCompile(`\s+(?:(?:720p|1080p)\s+)?\*+$`)
 
 const (
 	guideMaxAge     = 24 * time.Hour
 	refreshDebounce = 2 * time.Minute // a channel that drops out and back in costs one refresh, not two
 	sleepMin        = 60              // seconds
-	sleepRange      = 241             // rand(0..240) + sleepMin = 60..300s
+	sleepRange      = 241
 )
 
 type config struct {
@@ -88,13 +87,13 @@ type state struct {
 	successNoChanges      int
 	errors                int
 	totalRuns             int
-	jellyfinLastRefreshTS int64 // unix timestamp of last successful Jellyfin refresh
+	jellyfinLastRefreshTS int64
 }
 
 type channel struct {
 	name    string
-	channel string // base name without quality suffix (for aggregation)
-	group   string // group-title from EXTINF
+	channel string // base name without quality suffix
+	group   string
 	hash    string
 	extinf  string
 }
@@ -148,17 +147,12 @@ func downloadSource(rawURL string) ([]byte, int, error) {
 	return body, resp.StatusCode, err
 }
 
-// parseAndDedup parses the combined raw M3U bytes, deduplicates by acestream hash,
-// and rewrites acestream:// URLs to the aceserve HTTP URL.
-// It preserves the url-tvg attribute from the first source header so Jellyfin
-// can load the EPG guide automatically.
-// aceserveURL is used for health probes; streamBaseURL is written into the M3U for Jellyfin.
 func parseAndDedup(combined []byte) ([]channel, string) {
 	scanner := bufio.NewScanner(bytes.NewReader(combined))
 	seen := make(map[string]bool)
 	var channels []channel
 
-	var urlTVG string // extracted from the first #EXTM3U line in the sources
+	var urlTVG string
 	var extinf string
 
 	for scanner.Scan() {
@@ -194,8 +188,6 @@ func m3uHeader(urlTVG string) string {
 	return header
 }
 
-// extractAttr extracts the value of a quoted attribute from an M3U tag line.
-// e.g. extractAttr(`#EXTM3U url-tvg="http://foo.xml"`, "url-tvg") → "http://foo.xml"
 func extractAttr(line, attr string) string {
 	prefix := attr + `="`
 	idx := strings.Index(line, prefix)
@@ -315,8 +307,6 @@ func pushMetrics(pushURL string, s state, channels []channel, jellyfinCode int,
 	}
 }
 
-// lister is the list half: one pass reads the list, rebuilds the catalog, and rewrites Jellyfin's
-// playlist and guide when they really changed.
 type lister struct {
 	cfg     config
 	catalog *catalog
@@ -336,8 +326,8 @@ func (l *lister) run() {
 	var combined bytes.Buffer
 	sourceHTTPCodes := make(map[string]int)
 
-	// The sources are three routes to one IPNS key, and a gateway with a stale record resolves
-	// it to an older CID, so merging them puts already dropped channels back. First answer wins.
+	// The sources are routes to one IPNS key; a gateway with a stale record serves an older CID, so
+	// merging them would bring dropped channels back. The first answer wins.
 	for _, sourceURL := range cfg.sourceURLs {
 		log.Printf("Downloading: %s", sourceURL)
 		data, code, err := downloadSource(sourceURL)
@@ -349,8 +339,7 @@ func (l *lister) run() {
 			continue
 		}
 		combined.Write(data)
-		// Sources do not always end in a newline, and without this the last URL of one
-		// would be glued to the #EXTM3U of the next, escaping the dedup as a broken entry.
+		// Without the newline the last URL of one source glues to the next #EXTM3U and escapes the dedup.
 		combined.WriteByte('\n')
 		log.Printf("  ok (%d)", code)
 		break
@@ -443,8 +432,7 @@ func (l *lister) board() *statusBoard {
 	return l.hub.status
 }
 
-// keepWatched puts back a channel someone is watching when the list skipped it this pass: dropping
-// it would make Jellyfin delete the channel under the viewer. It leaves once nobody is on it.
+// A channel someone watches is put back when the list skipped it, or Jellyfin would delete it under the viewer.
 func (l *lister) keepWatched(order []string, groups map[string]*channelGroup) []string {
 	if l.hub == nil {
 		return order
