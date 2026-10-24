@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -33,5 +34,18 @@ func TestPageAndAPIHeaders(t *testing.T) {
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/vendor/lit-all.min.js", nil))
 	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
 		t.Errorf("a script is served as %q, which nosniff would refuse to run", ct)
+	}
+}
+
+func TestPageIsServed(t *testing.T) {
+	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement", "/favicon.svg": "<svg"} {
+		rec := httptest.NewRecorder()
+		servePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("GET %s: %d, missing %q", path, rec.Code, want)
+		}
+	}
+	if isPage("/channel/dazn-laliga-1080p") || isPage("/ace/getstream") || !isPage("/") || !isPage("/favicon.svg") {
+		t.Error("isPage routes streams to the page or the page to the proxy")
 	}
 }

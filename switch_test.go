@@ -416,14 +416,6 @@ func TestStatusAndMetricsShowTheSwitch(t *testing.T) {
 		getJSON(t, srv.URL+"/api/status", &st)
 		return st.Streams[0].Swarm.Download == 4000*1024
 	})
-	h := streamStatus{Slug: "dazn-laliga-1080p", Swarm: st.Streams[0].Swarm, channelSwitches: 1, remuxRestarts: 2}
-	out := string(swarmMetrics([]streamStatus{h}))
-	if !strings.Contains(out, `acestream_stream_source_switches_total{channel="dazn-laliga-1080p"} 1`) {
-		t.Errorf("metrics lack the switch:\n%s", out)
-	}
-	if !strings.Contains(out, `acestream_stream_remux_restarts_total{channel="dazn-laliga-1080p"} 2`) {
-		t.Errorf("metrics lack the remux restarts:\n%s", out)
-	}
 }
 
 func TestNoBetterSourceKeepsThePlayingOne(t *testing.T) {

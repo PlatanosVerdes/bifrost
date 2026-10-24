@@ -111,6 +111,7 @@ func TestSwarmMetricsPerChannel(t *testing.T) {
 		{Slug: "m-plus-liga-de-campeones-1080p", Viewers: 1, Swarm: &swarmStatus{Peers: 12, Download: 640 * 1024,
 			Upload: 1557 * 1024, Bitrate: 800 * 1024, Headroom: 0.8, Starving: true, Stalls: 3, SampledAt: time.Now()}},
 		{Slug: "dazn-1-1080p", Viewers: 1},
+		{Slug: "dazn-laliga-1080p", Swarm: &swarmStatus{SampledAt: time.Now()}, channelSwitches: 1, remuxRestarts: 2},
 	}))
 	for _, want := range []string{
 		`acestream_stream_peers{channel="m-plus-liga-de-campeones-1080p"} 12`,
@@ -119,7 +120,10 @@ func TestSwarmMetricsPerChannel(t *testing.T) {
 		`acestream_stream_bitrate_bytes_per_second{channel="m-plus-liga-de-campeones-1080p"} 819200`,
 		`acestream_stream_headroom{channel="m-plus-liga-de-campeones-1080p"} 0.8`,
 		`acestream_stream_starving{channel="m-plus-liga-de-campeones-1080p"} 1`,
-		"# TYPE acestream_stream_stalls_total counter\nacestream_stream_stalls_total{channel=\"m-plus-liga-de-campeones-1080p\"} 3",
+		`acestream_stream_source_switches_total{channel="dazn-laliga-1080p"} 1`,
+		`acestream_stream_remux_restarts_total{channel="dazn-laliga-1080p"} 2`,
+		"# TYPE acestream_stream_stalls_total counter",
+		`acestream_stream_stalls_total{channel="m-plus-liga-de-campeones-1080p"} 3`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics lack %q:\n%s", want, out)
