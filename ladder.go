@@ -12,9 +12,8 @@ import (
 	"time"
 )
 
-// A channel's 720p and 1080p versions are separate entries with the same guide id. A starving channel
-// steps down to a lower version's source and back up once its own measures clearly better, never to
-// another channel.
+// A channel's 720p and 1080p versions share a guide id: a starving channel steps down to a lower
+// version's source and back up once its own measures clearly better, never to another channel.
 
 var (
 	resolutionSuffix = regexp.MustCompile(`(?i)\s+(\d{3,4}p|4k)$`)

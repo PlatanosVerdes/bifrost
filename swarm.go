@@ -17,9 +17,8 @@ import (
 	"time"
 )
 
-// Aceserve redirects /ace/getstream to /ace/r/<infohash>/<session>, and /ace/stat/<infohash>/<session>
-// answers peers and speeds for that playback without a second session. The engine gives no bitrate,
-// so it is measured from the bytes relayed.
+// /ace/stat/<infohash>/<session> gives peers and speeds without a second session; the engine gives no
+// bitrate, so it is measured from the bytes relayed.
 
 const (
 	swarmHistory = 24 // samples kept per stream: two minutes at the default poll

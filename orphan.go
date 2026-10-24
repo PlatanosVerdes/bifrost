@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// Jellyfin can lose track of a session and keep pulling a channel nobody watches (a TV cut off by a
-// restart reopens it, and its later stop hits the old session). A channel whose every viewer is Jellyfin
-// is let go after orphanAfter without a Jellyfin session playing it; any doubt keeps it open.
+// Jellyfin can keep pulling a channel after losing its session (a stop that hits an older one): let it
+// go after orphanAfter with no Jellyfin session playing it, and keep it on any doubt.
 
 func fromJellyfin(r *http.Request) bool {
 	return strings.Contains(r.UserAgent(), "Jellyfin")

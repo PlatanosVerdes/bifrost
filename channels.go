@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// The list republishes channels under new content ids several times an hour, and Jellyfin keys a
-// channel on the MD5 of its URL: an id in the URL made every rotation a new channel. So Jellyfin gets
-// one URL per slug and the proxy resolves it against the catalog's current ids.
+// Jellyfin keys a channel on its URL and the list rotates content ids hourly: one URL per slug, and
+// the proxy resolves it against the current ids.
 
 // sourceMarker is the trailing run of stars that tells sources of one channel apart.
 var sourceMarker = regexp.MustCompile(`\s*\*+$`)

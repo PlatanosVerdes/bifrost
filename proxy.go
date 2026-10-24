@@ -25,9 +25,8 @@ const (
 	viewerBacklog = 256
 )
 
-// The engine serves a channel to one connection at a time and Jellyfin opens two (play and codec
-// probe), so one upstream per channel is shared by every viewer: the second got a 500 and Jellyfin
-// transcoded blind, which a Pi 4 does at half real time for 1080p.
+// One upstream per channel, shared: the engine serves one connection per channel, and Jellyfin's codec
+// probe got a 500 and made it transcode blind, at half real time on a Pi 4.
 type hub struct {
 	base    string
 	maxWait time.Duration
