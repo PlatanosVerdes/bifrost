@@ -30,14 +30,42 @@ func slug(name string) string {
 	return strings.Trim(nonSlug.ReplaceAllString(s, "-"), "-")
 }
 
+// mergeLists reads several lists as one: a content id in two lists counts once, from the first.
+func mergeLists(lists [][]byte) ([]channel, string) {
+	var all []channel
+	header := m3uHeader("")
+	seen := map[string]bool{}
+	for i, data := range lists {
+		channels, h := parseAndDedup(data)
+		if header == m3uHeader("") {
+			header = h
+		}
+		for _, c := range channels {
+			if !seen[c.hash] {
+				seen[c.hash] = true
+				c.list = i
+				all = append(all, c)
+			}
+		}
+	}
+	return all, header
+}
+
 func groupChannels(sources []channel) ([]string, map[string]*channelGroup) {
 	var order []string
 	groups := map[string]*channelGroup{}
+	firstList := map[string]int{}
 	for _, src := range sources {
 		key := groupKey(src.name)
 		id := slug(key)
 		g, ok := groups[id]
+		if !ok && src.list > 0 {
+			id, ok = sameChannel(src, order, groups, firstList)
+			g = groups[id]
+		}
 		if !ok {
+			id = slug(key)
+			firstList[id] = src.list
 			// The first source's tags (logo, tvg-id, group) describe the channel; only the name changes.
 			extinf := src.extinf
 			if i := strings.LastIndex(extinf, ","); i >= 0 {
@@ -50,6 +78,26 @@ func groupChannels(sources []channel) ([]string, map[string]*channelGroup) {
 		g.IDs = append(g.IDs, src.hash)
 	}
 	return order, groups
+}
+
+// sameChannel finds the channel an earlier list calls by another name: the one with the same guide id
+// and resolution. None, or more than one, and it stays a channel of its own.
+func sameChannel(src channel, order []string, groups map[string]*channelGroup, firstList map[string]int) (string, bool) {
+	tvg := extractAttr(src.extinf, "tvg-id")
+	if tvg == "" {
+		return "", false
+	}
+	match := ""
+	for _, id := range order {
+		g := groups[id]
+		if firstList[id] < src.list && extractAttr(g.extinf, "tvg-id") == tvg && height(g.Name) == height(groupKey(src.name)) {
+			if match != "" {
+				return "", false
+			}
+			match = id
+		}
+	}
+	return match, match != ""
 }
 
 // A URL of the slug alone, so the playlist only changes when a channel appears or disappears.
