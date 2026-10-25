@@ -14,7 +14,7 @@
 | `MAX_WAIT` | `45s` | How long the `?id=` route (one content id, no fallback) waits for video |
 | `LINGER` | `10s` | How long a stream outlives its last viewer |
 | `BIFROST_NAME` | the hostname | The machine's name, shown on the status page |
-| `SWITCH_AFTER` | `30s` | How long a stream starves before another source is probed; `0` turns switching off |
+| `SWITCH_BEHIND` | `5s` | How much video the playing source may owe before another source is probed; `0` turns switching off |
 | `PROBE_FOR`, `PROBE_COOLDOWN` | `20s`, `3m` | How long a probed source is measured; the wait between two probes of a channel |
 | `ORPHAN_AFTER` | `15m` | Let go a stream only Jellyfin holds once no Jellyfin session has played it for this long; `0` turns it off. Needs `JELLYFIN_URL` |
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](streams.md#moving-to-a-better-source)) |

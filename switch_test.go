@@ -14,30 +14,29 @@ import (
 	"time"
 )
 
-func TestProbeIsDueOnlyAfterASustainedStarve(t *testing.T) {
+func TestProbeIsDueOnceTheSourceIsFarEnoughBehind(t *testing.T) {
 	p := defaultPolicy
 	now := time.Date(2026, 10, 20, 21, 30, 0, 0, time.UTC)
 	off := p
-	off.after = 0
+	off.behind = 0
 	for _, c := range []struct {
-		name          string
-		policy        switchPolicy
-		starvingSince time.Time
-		lastProbe     time.Time
-		busy          bool
-		others        int
-		want          string
+		name      string
+		policy    switchPolicy
+		behind    time.Duration
+		lastProbe time.Time
+		busy      bool
+		others    int
+		want      string
 	}{
-		{"starving long enough", p, now.Add(-31 * time.Second), time.Time{}, false, 2, ""},
-		{"not starving", p, time.Time{}, time.Time{}, false, 2, "not starving"},
-		{"starving for 20 s", p, now.Add(-20 * time.Second), time.Time{}, false, 2, "not starving long enough"},
-		{"one source", p, now.Add(-time.Minute), time.Time{}, false, 0, "no other source"},
-		{"another probe runs", p, now.Add(-time.Minute), time.Time{}, true, 2, "a probe is running"},
-		{"probed 2 min ago", p, now.Add(-time.Minute), now.Add(-2 * time.Minute), false, 2, "cooling down"},
-		{"probed 4 min ago", p, now.Add(-time.Minute), now.Add(-4 * time.Minute), false, 2, ""},
-		{"switching off", off, now.Add(-time.Minute), time.Time{}, false, 2, "switching is off"},
+		{"far enough behind", p, 6 * time.Second, time.Time{}, false, 2, ""},
+		{"a little behind", p, 2 * time.Second, time.Time{}, false, 2, "not far enough behind"},
+		{"one source", p, time.Minute, time.Time{}, false, 0, "no other source"},
+		{"another probe runs", p, time.Minute, time.Time{}, true, 2, "a probe is running"},
+		{"probed 2 min ago", p, time.Minute, now.Add(-2 * time.Minute), false, 2, "cooling down"},
+		{"probed 4 min ago", p, time.Minute, now.Add(-4 * time.Minute), false, 2, ""},
+		{"switching off", off, time.Minute, time.Time{}, false, 2, "switching is off"},
 	} {
-		due, why := c.policy.probeDue(now, c.starvingSince, c.lastProbe, c.busy, c.others)
+		due, why := c.policy.probeDue(now, c.behind, c.lastProbe, c.busy, c.others)
 		if due != (c.want == "") || why != c.want {
 			t.Errorf("%s: due %t (%q), want %q", c.name, due, why, c.want)
 		}
@@ -63,7 +62,11 @@ func TestJudgeSwitchesOnlyToAClearlyBetterSource(t *testing.T) {
 		{"least bad by a wide margin", cur(0.5), cand(0.95, 18), true, true},
 		{"thin swarm needs twice the margin", cur(0.8), cand(1.15, 5), true, false},
 		{"thin swarm, far better", cur(0.8), cand(1.6, 5), true, true},
-		{"the playing one recovered", cur(1.0), cand(1.9, 25), false, false},
+		// Real cases: a probe at 1.50x and one at 1.56x on a thinner swarm were turned down because the
+		// playing source, flapping around 1x, had just recovered.
+		{"recovered, the candidate far better", reading{Headroom: 1.03, Peers: 9, Samples: 6}, cand(1.5, 8), false, true},
+		{"recovered, thinner but far better", reading{Headroom: 1.0, Peers: 17, Samples: 6}, cand(1.56, 6), false, true},
+		{"recovered, the candidate only a bit better", cur(1.0), cand(1.25, 25), false, false},
 		// A real case: the playing source flapped around 0.85x on 2 peers and was between two starves.
 		{"recovered for now, short on average", reading{Headroom: 0.85, Peers: 2, Samples: 6}, cand(1.4, 4), false, true},
 		{"stalled candidate", cur(0.8), reading{Headroom: 1.9, Peers: 25, Samples: 3, Stalled: true}, true, false},
@@ -316,7 +319,7 @@ func newSwitchingProxy(t *testing.T, engine http.Handler, ids ...string) (*httpt
 	t.Cleanup(func() { swarmMinSpan = span })
 	srv, h := newStatusProxy(t, engine, ids...)
 	h.swarmEvery = 20 * time.Millisecond
-	h.policy = switchPolicy{after: 100 * time.Millisecond, probeFor: 300 * time.Millisecond, cooldown: time.Minute,
+	h.policy = switchPolicy{behind: 30 * time.Millisecond, judgeOver: 100 * time.Millisecond, probeFor: 300 * time.Millisecond, cooldown: time.Minute,
 		minHeadroom: 1.1, margin: 0.2, starvingBelow: 1}
 	return srv, h
 }
