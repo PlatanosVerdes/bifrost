@@ -226,3 +226,22 @@ func TestListDownFallsBackToItsLastCopy(t *testing.T) {
 		t.Errorf("a list never read gave %q, want nothing", got)
 	}
 }
+
+func TestSourceListsFromAFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lists.json")
+	os.WriteFile(path, []byte(`[
+  {
+    "url": "http://a/list.m3u",
+    "backup": ["http://b/list.m3u"]
+  },
+  {"url": "http://c/other.m3u"}
+]
+`), 0o644)
+	lists, err := readSourceFile(path)
+	if err != nil || len(lists) != 2 || len(lists[0]) != 2 {
+		t.Errorf("lists = %v, %v; want the file's two lists", lists, err)
+	}
+	if _, err := readSourceFile(path + ".missing"); err == nil {
+		t.Error("a missing file read as lists")
+	}
+}
