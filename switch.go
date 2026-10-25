@@ -24,7 +24,10 @@ const (
 )
 
 type switchPolicy struct {
-	after       time.Duration // starving this long before a probe; 0 turns switching off
+	// Video the playing source owes before a probe: it fills fast on a deep starve and slowly on a
+	// source that flaps around the bitrate, which no "starving for so long" ever caught. 0 turns it off.
+	behind      time.Duration
+	judgeOver   time.Duration // the playing source's average over this is what a candidate must beat
 	probeFor    time.Duration // how long a candidate is sampled once it delivers
 	cooldown    time.Duration // per channel, from the end of one probe to the start of the next
 	minHeadroom float64       // a candidate that keeps up needs this
@@ -33,19 +36,17 @@ type switchPolicy struct {
 	starvingBelow float64
 }
 
-var defaultPolicy = switchPolicy{after: 30 * time.Second, probeFor: 20 * time.Second, cooldown: 3 * time.Minute,
-	minHeadroom: 1.1, margin: 0.2, starvingBelow: 1}
+var defaultPolicy = switchPolicy{behind: 5 * time.Second, judgeOver: 30 * time.Second, probeFor: 20 * time.Second,
+	cooldown: 3 * time.Minute, minHeadroom: 1.1, margin: 0.2, starvingBelow: 1}
 
-func (p switchPolicy) probeDue(now, starvingSince, lastProbe time.Time, busy bool, others int) (bool, string) {
+func (p switchPolicy) probeDue(now time.Time, behind time.Duration, lastProbe time.Time, busy bool, others int) (bool, string) {
 	switch {
-	case p.after <= 0:
+	case p.behind <= 0:
 		return false, "switching is off"
 	case others == 0:
 		return false, "no other source"
-	case starvingSince.IsZero():
-		return false, "not starving"
-	case now.Sub(starvingSince) < p.after:
-		return false, "not starving long enough"
+	case behind < p.behind:
+		return false, "not far enough behind"
 	case busy:
 		return false, "a probe is running"
 	case !lastProbe.IsZero() && now.Sub(lastProbe) < p.cooldown:
@@ -104,9 +105,12 @@ func (p switchPolicy) judge(current, candidate reading, stillStarving bool) (boo
 		return false, fmt.Sprintf("too few samples (%d)", candidate.Samples)
 	case candidate.Stalled:
 		return false, "the candidate stalled"
-	// A source that flaps around the bitrate "recovers" between its starves; only its average counts.
-	case !stillStarving && current.Headroom >= p.starvingBelow:
+	// A source that flaps around the bitrate "recovers" between its starves; only its average counts,
+	// and one that keeps up on average is left only for clearly more headroom than a step up asks.
+	case !stillStarving && current.Headroom >= p.starvingBelow && candidate.Headroom < math.Max(stepUpHeadroom, need+p.margin/2):
 		return false, "the playing source recovered"
+	case !stillStarving && current.Headroom >= p.starvingBelow:
+		return true, fmt.Sprintf("far more headroom, %.2fx against %.2fx", candidate.Headroom, current.Headroom)
 	case candidate.Headroom >= math.Max(need, p.minHeadroom):
 		return true, fmt.Sprintf("keeps up at %.2fx against %.2fx", candidate.Headroom, current.Headroom)
 	// No source keeps up: the least bad one is worth a discontinuity only by a wide margin.
@@ -313,9 +317,9 @@ func (s *stream) maybeProbe(w *swarm) {
 	if stepUp {
 		pool = ids
 		last := s.h.lastProbe[s.slug]
-		due = s.h.policy.after > 0 && s.h.probing == "" && (last.IsZero() || now.Sub(last) >= s.h.policy.cooldown)
+		due = s.h.policy.behind > 0 && s.h.probing == "" && (last.IsZero() || now.Sub(last) >= s.h.policy.cooldown)
 	} else {
-		due, _ = s.h.policy.probeDue(now, w.starvingSince(), s.h.lastProbe[s.slug], s.h.probing != "", others(pool, current))
+		due, _ = s.h.policy.probeDue(now, w.behindBy(), s.h.lastProbe[s.slug], s.h.probing != "", others(pool, current))
 	}
 	if !due {
 		s.h.mu.Unlock()
@@ -339,7 +343,7 @@ func (s *stream) maybeProbe(w *swarm) {
 func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, stepUp bool) {
 	p := s.h.policy
 	start := time.Now()
-	before := w.reading(start.Add(-p.after))
+	before := w.reading(start.Add(-p.judgeOver))
 	var after *reading
 	keep := func(reason string) {
 		log.Printf("[proxy] %s kept %s: probe %s %s", s.label, short(current), short(cand), reason)
@@ -358,8 +362,8 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, step
 	if stepUp {
 		log.Printf("[proxy] %s probing %s to step back up from %s", s.label, short(cand), short(current))
 	} else {
-		log.Printf("[proxy] %s probing %s: %s has starved for %s at %.2fx, %.0f peers", s.label, short(cand), short(current),
-			start.Sub(w.starvingSince()).Round(time.Second), before.Headroom, before.Peers)
+		log.Printf("[proxy] %s probing %s: %s is %s of video behind, %.2fx, %.0f peers", s.label, short(cand), short(current),
+			w.behindBy().Round(100*time.Millisecond), before.Headroom, before.Peers)
 	}
 	label := s.label + " [probe " + short(cand) + "]"
 	openBy := start.Add(min(s.h.sourceWait, probeOpenWait))

@@ -23,7 +23,7 @@ func main() {
 	h.name = getenv("BIFROST_NAME", hostname())
 	h.sourceWait = getduration("SOURCE_WAIT", 25*time.Second)
 	h.channelWait = getduration("CHANNEL_MAX_WAIT", 90*time.Second)
-	h.policy.after = getduration("SWITCH_AFTER", h.policy.after)
+	h.policy.behind = getduration("SWITCH_BEHIND", h.policy.behind)
 	h.policy.probeFor = getduration("PROBE_FOR", h.policy.probeFor)
 	h.policy.cooldown = getduration("PROBE_COOLDOWN", h.policy.cooldown)
 	h.policy.minHeadroom = getfloat("SWITCH_MIN_HEADROOM", h.policy.minHeadroom)

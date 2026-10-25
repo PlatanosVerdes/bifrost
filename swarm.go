@@ -26,7 +26,9 @@ const (
 	// Samples in a row with the download under the bitrate before a stream counts as starving: one
 	// slow sample is the engine's speed jittering, three are its buffer draining.
 	starvingAfter = 3
-	kib           = 1024
+	// What a stream can owe at most, so a long stall does not take as long to pay back.
+	maxBehind = time.Minute
+	kib       = 1024
 )
 
 // The bitrate is not measured before the samples span this much. A variable only for the tests.
@@ -105,6 +107,7 @@ type swarm struct {
 	stalls    int
 	lastErr   string
 	since     time.Time // when it started starving
+	behind    float64   // seconds of video the download owes the bitrate, paid back when it runs ahead
 	threshold float64   // download under this times the bitrate is short; 0 means 1
 }
 
@@ -127,10 +130,19 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 	if threshold == 0 {
 		threshold = 1
 	}
-	if rate := bitrate(w.samples); rate > 0 && float64(s.stat.SpeedDown*kib) < rate*threshold {
+	rate := bitrate(w.samples)
+	if rate > 0 && float64(s.stat.SpeedDown*kib) < rate*threshold {
 		w.below++
 	} else {
 		w.below = 0
+	}
+	if n := len(w.samples); rate > 0 && n > 1 {
+		down := float64(s.stat.SpeedDown * kib)
+		if s.stat.Status != "dl" {
+			down = 0
+		}
+		dt := s.at.Sub(w.samples[n-2].at).Seconds()
+		w.behind = min(max(w.behind+(1-down/rate)*dt, 0), maxBehind.Seconds())
 	}
 	isStarving := w.below >= starvingAfter
 	switch {
@@ -140,6 +152,12 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 		w.since = time.Time{}
 	}
 	return isStarving && !wasStarving, wasStarving && !isStarving, stalled
+}
+
+func (w *swarm) behindBy() time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return time.Duration(w.behind * float64(time.Second))
 }
 
 func (w *swarm) starvingSince() time.Time {

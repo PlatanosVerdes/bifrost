@@ -182,3 +182,33 @@ func TestStatusShowsTheSwarmOfWhatIsPlaying(t *testing.T) {
 		t.Errorf("engine streamed %d connections, want the one playing", n)
 	}
 }
+
+// A source flapping around the bitrate never starves for long, but the video it owes adds up.
+func TestVideoOwedAddsUpAcrossFlaps(t *testing.T) {
+	w := &swarm{}
+	for s := 0.0; s <= 15; s += 5 {
+		w.add(at(s, "dl", 820, 820, 1))
+	}
+	for s := 20.0; s <= 140; s += 5 {
+		down := 740 // 0.9x
+		if int(s)%15 == 0 {
+			down = 840
+		}
+		w.add(at(s, "dl", down, 820, 1))
+	}
+	if got := w.behindBy(); got < 5*time.Second || got > 10*time.Second {
+		t.Errorf("two minutes flapping between 0.9x and 1.02x owe %s, want past the 5 s that probes", got)
+	}
+	for s := 145.0; s <= 300; s += 5 {
+		w.add(at(s, "dl", 1640, 820, 1)) // 2x pays back a second a second
+	}
+	if got := w.behindBy(); got != 0 {
+		t.Errorf("after running ahead it still owes %s", got)
+	}
+	for s := 305.0; s <= 900; s += 5 {
+		w.add(at(s, "stalled", 0, 820, 1))
+	}
+	if got := w.behindBy(); got != maxBehind {
+		t.Errorf("a long stall owes %s, want the cap %s", got, maxBehind)
+	}
+}
