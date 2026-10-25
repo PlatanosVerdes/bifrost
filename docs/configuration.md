@@ -34,7 +34,8 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 ## Several lists
 
 `SOURCE_URLS` takes a JSON array for more than one list, each with optional backup routes to the
-same list:
+same list. It can also be the path of a file holding that array (it starts with `/`), reread on
+every pass so an edit applies without a restart:
 
 ```json
 [

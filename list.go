@@ -35,6 +35,7 @@ type config struct {
 	aceserveBaseURL string
 	guideSourceURL  string     // full XMLTV guide, cut down to our channels; empty skips it
 	sourceLists     [][]string // each list's routes, tried in order
+	sourceFile      string     // where sourceLists is read from on every pass, when given as a file
 	pushgatewayURL  string
 	jellyfinURL     string
 	jellyfinAPIKey  string
@@ -48,7 +49,16 @@ type config struct {
 }
 
 func loadConfig() config {
-	lists, err := parseSourceLists(mustEnv("SOURCE_URLS"))
+	// A path is a file of lists, reread on every pass so an edit needs no restart.
+	raw, file := mustEnv("SOURCE_URLS"), ""
+	var lists [][]string
+	var err error
+	if strings.HasPrefix(raw, "/") {
+		file = raw
+		lists, err = readSourceFile(file)
+	} else {
+		lists, err = parseSourceLists(raw)
+	}
 	if err != nil {
 		log.Fatalf("SOURCE_URLS: %v", err)
 	}
@@ -60,6 +70,7 @@ func loadConfig() config {
 		aceserveBaseURL: getenv("ACESERVE_BASE_URL", "http://aceserve:6878"),
 		guideSourceURL:  os.Getenv("GUIDE_SOURCE_URL"),
 		sourceLists:     lists,
+		sourceFile:      file,
 		pushgatewayURL:  os.Getenv("PUSHGATEWAY_URL"),
 		jellyfinURL:     mustEnv("JELLYFIN_URL"),
 		jellyfinAPIKey:  mustEnv("JELLYFIN_API_KEY"),
@@ -107,6 +118,14 @@ func parseSourceLists(raw string) ([][]string, error) {
 		return nil, fmt.Errorf("no list")
 	}
 	return lists, nil
+}
+
+func readSourceFile(path string) ([][]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseSourceLists(string(b))
 }
 
 func mustEnv(key string) string {
@@ -362,6 +381,13 @@ func (l *lister) run() {
 
 	sourceHTTPCodes := make(map[string]int)
 	var lists [][]byte
+	if cfg.sourceFile != "" {
+		if lists, err := readSourceFile(cfg.sourceFile); err != nil {
+			log.Printf("warning: %s: %v, keeping the lists read before", cfg.sourceFile, err)
+		} else {
+			l.cfg.sourceLists, cfg.sourceLists = lists, lists
+		}
+	}
 	for _, routes := range cfg.sourceLists {
 		if data := l.readList(routes, &s, sourceHTTPCodes); data != nil {
 			lists = append(lists, data)
