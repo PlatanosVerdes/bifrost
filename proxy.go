@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -300,7 +301,9 @@ func (s *stream) findSource(ctx context.Context, p plan, headers http.Header) (f
 		if len(p.sources) > 1 {
 			label = s.label + " [" + short(id) + "]"
 		}
-		target := s.h.base + "/ace/getstream?id=" + id
+		// Each stream its own pid: without one the engine takes every open from bifrost for one player,
+		// and opening a second channel stopped the first.
+		target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-play-%d", s.h.base, id, s.h.probes.Add(1))
 		r, ok := open(ctx, s.h.client, target, headers, label, srcDeadline)
 		if !ok {
 			if ctx.Err() == nil {
