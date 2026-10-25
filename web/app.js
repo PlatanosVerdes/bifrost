@@ -134,13 +134,14 @@ class SourcePicker extends LitElement {
   ranked() {
     const c = this.channel;
     return (c.sources?.length ? c.sources : c.ids.map((id) => ({ id }))).map((x, i) => ({ ...x, n: i + 1 }))
-      .sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
+      .sort((a, b) => (a.outcome === "failed") - (b.outcome === "failed") || (b.headroom ?? -1) - (a.headroom ?? -1));
   }
 
   facts(x) {
-    if (!x.seen_at && x.headroom == null) return html`<span class="muted">Not tried yet</span>`;
+    const kept = x.kept ? html`<span class="muted">Not in the list</span>` : "";
+    if (!x.seen_at && x.headroom == null) return [kept, html`<span class="muted">Not tried yet</span>`].filter(Boolean).map((b, i) => html`${i ? " · " : ""}${b}`);
     const tone = x.headroom == null ? "" : swarmTone({ headroom: x.headroom }) || "quick";
-    const bits = [x.outcome === "failed" ? html`<span class="bad">Failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
+    const bits = [kept, x.outcome === "failed" ? html`<span class="bad">Failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
       x.height ? `${x.height}p` : "", x.audio, x.peers != null ? plural(x.peers, "peer") : "", hhmm(x.seen_at)].filter(Boolean);
     return bits.map((b, i) => html`${i ? " · " : ""}${b}`);
   }
@@ -164,7 +165,7 @@ class SourcePicker extends LitElement {
         <ul class="panel">${this.ranked().map((x, i) => {
           const on = x.id === c.playing.source, mine = pick?.id === x.id;
           return html`<li class="line">
-            <span><b>Source ${x.n}</b>${i === 0 && x.headroom != null ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}</span>
+            <span><b>Source ${x.n}</b>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}</span>
             ${on ? html`<span class="tag on">Playing</span>`
               : html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>`}
             <span class="info">${this.facts(x)}</span></li>`;

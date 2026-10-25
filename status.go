@@ -265,6 +265,9 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 		out = append(out, channelInfo{Slug: slug, Name: g.Name, Group: extractAttr(g.extinf, "group-title"),
 			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs),
 			LastOpen: h.status.lastOpen(slug), Sources: h.sourcesOf(g.IDs)})
+		for i := range out[len(out)-1].Sources {
+			out[len(out)-1].Sources[i].Kept = g.kept[out[len(out)-1].Sources[i].ID]
+		}
 		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
 			out[len(out)-1].Playing = &st

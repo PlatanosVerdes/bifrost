@@ -348,6 +348,7 @@ type lister struct {
 	catalog *catalog
 	hub     *hub
 
+	memory     *memory   // what the list dropped, kept until it fails
 	refreshDue time.Time // when Jellyfin is due a refresh; zero when nothing is waiting
 	guideIDs   []string  // the guide ids guide.xml was last cut down for
 }
@@ -379,6 +380,10 @@ func (l *lister) run() {
 	log.Printf("Channels: %d unique after dedup", len(channels))
 
 	order, groups := groupChannels(channels)
+	if l.memory == nil {
+		l.memory = &memory{path: filepath.Join(cfg.stateDir, "remembered.json")}
+	}
+	order = l.memory.keep(order, groups, l.failed)
 	order = l.keepWatched(order, groups)
 	l.catalog.set(order, groups)
 	newM3U := stableM3U(header, cfg.channelBaseURL, order, groups)
@@ -473,6 +478,16 @@ func (l *lister) readList(routes []string, s *state, codes map[string]int) []byt
 	}
 	log.Printf("  every route to %s failed, using its last copy", routes[0])
 	return data
+}
+
+func (l *lister) failed(id string) bool {
+	if l.hub == nil {
+		return false
+	}
+	l.hub.mu.Lock()
+	defer l.hub.mu.Unlock()
+	f := l.hub.facts[id]
+	return f != nil && f.Outcome == "failed"
 }
 
 // board is where the status page reads from; a lister without a hub (tests) writes to a throwaway.
