@@ -21,6 +21,7 @@ type sourceFacts struct {
 	Peers    int       `json:"peers,omitempty"`
 	SeenAt   time.Time `json:"seen_at,omitzero"`
 	Outcome  string    `json:"outcome,omitempty"` // played, probed, failed
+	Kept     bool      `json:"kept,omitempty"`    // dropped by the list, kept until it fails
 }
 
 func (h *hub) noteSource(id string, change func(*sourceFacts)) {

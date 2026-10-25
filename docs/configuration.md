@@ -9,7 +9,7 @@
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY` | required | To run Refresh Guide |
 | `PUSHGATEWAY_URL` | empty | Where the `acestream_*` metrics go |
 | `OUTPUT_FILE` | `/data/channels_ace.m3u` | Jellyfin's playlist; `guide.xml` is written next to it |
-| `STATE_DIR` | `/state` | Run counters, the cached full guide, `sources.json` (what was last seen of each source, so a restart still tries a lately failed one last; a week unseen is dropped), and `invites.json` (who invited each viewer, which Cloudflare cannot tell) and `join-links.json` (invite links not used yet, by hash) |
+| `STATE_DIR` | `/state` | Run counters, the cached full guide, `sources.json` (what was last seen of each source, so a restart still tries a lately failed one last; a week unseen is dropped), `remembered.json` (every channel and source the list has carried, see [Rules](rules.md#the-list-drops-what-still-plays)), and `invites.json` (who invited each viewer, which Cloudflare cannot tell) and `join-links.json` (invite links not used yet, by hash) |
 | `SOURCE_WAIT` / `CHANNEL_MAX_WAIT` | `25s` / `90s` | Per source, and in all, before a channel is given up |
 | `MAX_WAIT` | `45s` | How long the `?id=` route (one content id, no fallback) waits for video |
 | `LINGER` | `10s` | How long a stream outlives its last viewer |
