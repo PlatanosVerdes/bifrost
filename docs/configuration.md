@@ -26,7 +26,7 @@
 | `ACCESS_AUD` | empty (sharing off) | This bifrost's Access app's tag: Access app → Overview → Application Audience (AUD) Tag. Tokens for any other app are refused |
 | `ACCESS_JOIN_AUD` | empty (no invite links) | The AUD tag of a second Access app on `<domain>/join/*` that lets anyone sign in. See [Invite links](sharing.md#invite-links) |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty (sharing off) | The account that holds the Access app, and an account-owned token with only Access: Apps Read, Access: Policies Read and Access: Groups Edit |
-| `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page |
+| `BIFROST_ADMINS` | empty (nobody) | Comma-separated emails that may change who has access from the page. They can also make members admins from the Share dialog (kept in `STATE_DIR/admins.json`); the ones listed here cannot be changed from the page |
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
 (as Jellyfin sees those paths).

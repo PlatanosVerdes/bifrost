@@ -54,8 +54,9 @@ var errNoToken = errors.New("no token from the access provider")
 var errNoJoin = errors.New("no join app is set up")
 
 type access struct {
-	provider accessProvider // nil: sharing is off
-	admins   map[string]bool
+	provider accessProvider  // nil: sharing is off
+	admins   map[string]bool // BIFROST_ADMINS: cannot be changed from the page
+	granted  *adminRoles
 	invites  *inviteLog
 	links    *joinLinks
 	joinable bool       // a join app lets people sign in before they are on a list
@@ -86,7 +87,7 @@ func (q *quietLog) printf(format string, args ...any) {
 }
 
 func newAccess(cfg config) *access {
-	a := &access{admins: map[string]bool{}, invites: loadInvites(cfg.stateDir), links: loadJoinLinks(cfg.stateDir)}
+	a := &access{admins: map[string]bool{}, granted: loadAdminRoles(cfg.stateDir), invites: loadInvites(cfg.stateDir), links: loadJoinLinks(cfg.stateDir)}
 	for _, e := range strings.Split(cfg.admins, ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
 			a.admins[e] = true
@@ -113,7 +114,7 @@ func (a *access) who(r *http.Request) (viewer, bool) {
 		}
 		return viewer{}, false
 	}
-	return v, v.email != "" && a.admins[strings.ToLower(v.email)]
+	return v, v.email != "" && (a.admins[strings.ToLower(v.email)] || a.granted.has(v.email))
 }
 
 func (a *access) serve(w http.ResponseWriter, r *http.Request) {
@@ -141,8 +142,8 @@ func (a *access) serve(w http.ResponseWriter, r *http.Request) {
 
 // adminRequest checks a change to who has access; when it answers false it has already replied.
 func (a *access) adminRequest(w http.ResponseWriter, r *http.Request) (viewer, site, bool) {
-	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "Use POST or DELETE")
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete && r.Method != http.MethodPatch {
+		writeError(w, http.StatusMethodNotAllowed, "Use POST, PATCH or DELETE")
 		return viewer{}, site{}, false
 	}
 	if a.provider == nil {
@@ -183,12 +184,17 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 		Group  string   `json:"group"`
 		Emails []string `json:"emails"`
 		Email  string   `json:"email"`
+		Role   string   `json:"role"` // PATCH: admin or viewer
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "The change could not be read")
 		return
 	}
 	var err error
+	if r.Method == http.MethodPatch {
+		a.serveRole(w, v, s, body.Email, body.Role)
+		return
+	}
 	if r.Method == http.MethodPost {
 		var emails []string
 		if emails, err = cleanEmails(body.Emails); err != nil {
@@ -213,7 +219,9 @@ func (a *access) serveMembers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "You cannot remove yourself: ask another admin")
 			return
 		}
-		err = a.provider.remove(r.Context(), v, body.Group, email[0])
+		if err = a.provider.remove(r.Context(), v, body.Group, email[0]); err == nil {
+			err = a.granted.grant(email[0], false)
+		}
 	}
 	if err != nil {
 		providerError(w, err)
@@ -349,8 +357,47 @@ func joinPage(w http.ResponseWriter, status int, title, detail string) {
 	joinTemplate.Execute(w, struct{ Title, Detail string }{title, detail})
 }
 
+func (a *access) serveRole(w http.ResponseWriter, v viewer, s site, raw, role string) {
+	email, err := cleanEmails([]string{raw})
+	switch {
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case role != "admin" && role != "viewer":
+		writeError(w, http.StatusBadRequest, "The role is admin or viewer")
+		return
+	case a.admins[email[0]]:
+		writeError(w, http.StatusConflict, "That admin is set in bifrost's settings, not from the page")
+		return
+	case email[0] == strings.ToLower(v.email):
+		writeError(w, http.StatusConflict, "You cannot change your own role: ask another admin")
+		return
+	}
+	member := false
+	for _, l := range s.lists {
+		member = member || l.Editable && slices.Contains(l.Members, email[0])
+	}
+	if !member {
+		writeError(w, http.StatusNotFound, "Only someone on this page's members can be made an admin")
+		return
+	}
+	if err := a.granted.grant(email[0], role == "admin"); err != nil {
+		log.Printf("[access] could not save admins: %v", err)
+		writeError(w, http.StatusServiceUnavailable, "Could not save the change. Try again in a moment")
+		return
+	}
+	log.Printf("[access] %s set %s's role to %s", strings.ToLower(v.email), email[0], role)
+	writeJSON(w, a.adminPayload(v, s))
+}
+
 func (a *access) adminPayload(v viewer, s site) map[string]any {
-	out := map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists, "invites": a.invites.of(s.lists), "joinable": a.joinable}
+	owners := make([]string, 0, len(a.admins))
+	for e := range a.admins {
+		owners = append(owners, e)
+	}
+	slices.Sort(owners)
+	out := map[string]any{"enabled": true, "me": v.email, "admin": true, "link": s.link, "groups": s.lists, "invites": a.invites.of(s.lists), "joinable": a.joinable,
+		"owners": owners, "admins": a.granted.list()}
 	if a.joinable {
 		out["links"] = a.links.pending(time.Now())
 	}

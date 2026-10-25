@@ -447,6 +447,9 @@ class ShareDialog extends LitElement {
     .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .who small { display: block; color: var(--muted); font-size: 12px; }
     .remove { font-size: 12px; padding: 5px 10px; }
+    .role { font: inherit; font-size: 12px; font-weight: 600; border-radius: 8px; padding: 5px 8px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+    .role:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .fixed { font-size: 12px; color: var(--muted); }
   `];
 
   constructor() { super(); this.data = null; this.error = ""; this.busy = false; this.copied = false; this.created = ""; }
@@ -506,10 +509,15 @@ class ShareDialog extends LitElement {
 
   members(group) {
     if (!group.members.length) return html`<li class="muted">Nobody yet.</li>`;
-    const me = this.access.me?.toLowerCase();
+    const me = this.access.me?.toLowerCase(), owners = this.data.owners ?? [], admins = this.data.admins ?? [];
+    const isAdmin = (m) => owners.includes(m) || admins.includes(m);
     return group.members.map((m) => html`<li>${avatar(m)}
-      <span class="who">${m}${m === me ? html`<small>you</small>` : this.invited(m)}</span>
-      ${group.editable && m !== me ? html`<button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
+      <span class="who">${m}${m === me ? html`<small>you · admin</small>` : this.invited(m)}</span>
+      ${group.editable && m !== me ? html`${owners.includes(m)
+        ? html`<span class="fixed" title="Set in bifrost's settings">Admin</span>`
+        : html`<select class="role" aria-label="Role of ${m}" ?disabled=${this.busy} @change=${(e) => this.change("PATCH", { email: m, role: e.target.value })}>
+            <option value="viewer" ?selected=${!isAdmin(m)}>Viewer</option><option value="admin" ?selected=${isAdmin(m)}>Admin</option></select>`}
+        <button class="btn remove" ?disabled=${this.busy} @click=${() => this.change("DELETE", { group: group.id, email: m })}>Remove</button>` : nothing}</li>`);
   }
 
   copyBox(text, label) {
@@ -521,7 +529,7 @@ class ShareDialog extends LitElement {
     const links = Object.entries(this.data.links ?? {}).sort(([, a], [, b]) => a.expires.localeCompare(b.expires));
     const day = (t) => new Date(t).toLocaleDateString([], { day: "numeric", month: "short" });
     return html`${this.created
-        ? html`${this.copyBox(this.created, "Invite link")}<p class="hint">Send it by any chat. It lets one person in, for a week: they sign in with Google or a code sent to their email and are added to ${group.name}.</p>`
+        ? html`${this.copyBox(this.created, "Invite link")}<p class="hint">Send it by any chat. It lets one person in, for a week: they sign in with Google or a code sent to their email and become a member.</p>`
         : html`<button class="btn primary" ?disabled=${this.busy} @click=${() => this.createLink(group)}>Create invite link</button>
           <p class="hint">Whoever opens it first gets in, so send it only to the person you mean.</p>`}
       ${links.length ? html`<h4>Invite links not used yet</h4><ul>${links.map(([id, l]) => html`<li>
@@ -545,7 +553,7 @@ class ShareDialog extends LitElement {
             <button class="btn ${a.joinable ? "" : "primary"}" ?disabled=${this.busy}>Add</button></form>
           <p class="hint">They must sign in with this exact address. Separate several with commas.</p>`
         : html`<p class="hint">No list here can be edited from bifrost: each one may also let people into something else.</p>`}
-      ${a.groups.map((g) => html`<h4>${g.name}${g.editable ? "" : " · managed elsewhere"}</h4><ul>${this.members(g)}</ul>`)}
+      ${a.groups.map((g) => html`<h4>${g.editable ? "Members" : `${g.name} · managed elsewhere`}</h4><ul>${this.members(g)}</ul>`)}
       ${editable ? html`<p class="hint">Removing someone stops new sign-ins at once; a page they already have open keeps working until their session ends (up to a day).</p>` : nothing}`}
       ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
     </dialog>`;
