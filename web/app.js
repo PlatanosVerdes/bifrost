@@ -272,6 +272,8 @@ class ActivityView extends LitElement {
     .row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; }
     .row > div { min-width: 0; overflow-wrap: anywhere; }
     .row + .row { margin-top: 12px; }
+    .devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .devices li { display: grid; grid-template-columns: none; padding: 0; border: 0; }
     .ring { width: 44px; height: 44px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); }
     .ring.on { border: 2px solid var(--accent); color: var(--accent); }
     .row p { margin: 2px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
@@ -348,7 +350,9 @@ class ActivityView extends LitElement {
 
   watching(st, watchers) {
     if (!watchers.length) return html`<div class="fact"><span class="lbl">Watching</span>${plural(st.viewers, "viewer")}<span class="sub">not through Jellyfin</span></div>`;
-    return html`<div class="fact"><span class="lbl">Watching</span>${watchers.map((w) => html`${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(", ")}</span>`)}</div>`;
+    // One line per device: the same user on two screens is two lines, not one name.
+    const others = st.viewers - watchers.length;
+    return html`<div class="fact"><span class="lbl">Watching</span><ul class="devices">${watchers.map((w) => html`<li>${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(" · ")}</span></li>`)}${others > 0 ? html`<li class="muted">+${others} not through Jellyfin</li>` : nothing}</ul></div>`;
   }
 
   // The headroom bar is the loud thing on the card: the tick is what the stream needs (1x), the bar fills to 1.5x.
