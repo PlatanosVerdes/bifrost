@@ -2,7 +2,7 @@
 
 | Variable | Default | What it is |
 | :--- | :--- | :--- |
-| `SOURCE_URLS` | required | Comma-separated routes to the list; the first that answers wins |
+| `SOURCE_URLS` | required | The channel list: comma-separated routes to it, the first that answers wins. Several lists as JSON, see below |
 | `ACESERVE_BASE_URL` | `http://aceserve:6878` | The engine's HTTP API |
 | `CHANNEL_BASE_URL` | `http://bifrost:6879/channel/` | How Jellyfin reaches this proxy; written into the M3U |
 | `GUIDE_SOURCE_URL` | empty (no guide) | Full XMLTV guide, cut down into `guide.xml` |
@@ -30,6 +30,24 @@
 
 Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`
 (as Jellyfin sees those paths).
+
+## Several lists
+
+`SOURCE_URLS` takes a JSON array for more than one list, each with optional backup routes to the
+same list:
+
+```json
+[
+  {"url": "http://kubo:8080/ipns/<key>/list.m3u", "backup": ["https://ipfs.io/ipns/<key>/list.m3u"]},
+  {"url": "http://lists.local/other.m3u"}
+]
+```
+
+Their sources add up: a channel gets the sources every list has for it, the first list's first. A
+later list's entry joins a channel by its name, or by the same guide id and resolution when it names
+it otherwise; a content id in two lists counts once. Tags (logo, guide id, group) come from the list
+that brought the channel. A list none of whose routes answers is read from its last copy in
+`STATE_DIR/lists`, so it drops nothing.
 
 ## HTTP
 
