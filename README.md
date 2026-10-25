@@ -54,6 +54,16 @@ bifrost:
 
 Point Jellyfin's tuner at `/data/channels_ace.m3u` and its XMLTV provider at `/data/guide.xml`.
 
+`SOURCE_URLS` takes the channel lists in one of three forms:
+
+| Form | Example |
+| :--- | :--- |
+| One list, its routes comma-separated (the first that answers wins) | `http://lists.local/channels.m3u,https://mirror.example/channels.m3u` |
+| Several lists as JSON, each with optional backup routes | `[{"url": "http://lists.local/a.m3u", "backup": ["https://mirror.example/a.m3u"]}, {"url": "http://lists.local/b.m3u"}]` |
+| The path of a file holding that JSON, reread on every pass | `/config/lists.json`, with `./config:/config:ro` mounted |
+
+Several lists add up their sources per channel; see [Configuration](docs/configuration.md#several-lists).
+
 ## Docs
 
 | | |
