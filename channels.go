@@ -18,6 +18,7 @@ type channelGroup struct {
 	Name   string   `json:"name"`
 	IDs    []string `json:"ids"`
 	extinf string
+	kept   map[string]bool // sources the list dropped and the memory still holds
 }
 
 func groupKey(name string) string {
