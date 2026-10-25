@@ -506,3 +506,32 @@ func TestStreamDropsCredentials(t *testing.T) {
 		t.Errorf("the engine lost the User-Agent: %v", h)
 	}
 }
+
+// Two channels played at once from one bifrost: the engine must see two players, not one whose new
+// download stops its old one.
+func TestTwoChannelsPlayAtOnce(t *testing.T) {
+	engine := newSourceEngine(map[string]int{slowSource: 4000, fastSource: 4000})
+	srv, h := newStatusProxy(t, engine, slowSource)
+	h.table.set([]string{"a", "b"}, map[string]*channelGroup{
+		"a": {Name: "A", IDs: []string{slowSource}},
+		"b": {Name: "B", IDs: []string{fastSource}},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, slug := range []string{"a", "b"} {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/"+slug, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		go io.Copy(io.Discard, resp.Body)
+	}
+	waitFor(t, "both channels playing", func() bool {
+		return engine.count(engine.live, slowSource) == 1 && engine.count(engine.live, fastSource) == 1
+	})
+	time.Sleep(300 * time.Millisecond)
+	if engine.count(engine.live, slowSource) != 1 || engine.count(engine.live, fastSource) != 1 {
+		t.Errorf("live sessions %d and %d, want both channels still playing", engine.count(engine.live, slowSource), engine.count(engine.live, fastSource))
+	}
+}
