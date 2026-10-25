@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +33,8 @@ type config struct {
 	stateDir        string // run counters and the cached full guide
 	channelBaseURL  string // how Jellyfin reaches this proxy: <base><slug>
 	aceserveBaseURL string
-	guideSourceURL  string // full XMLTV guide, cut down to our channels; empty skips it
-	sourceURLs      []string
+	guideSourceURL  string     // full XMLTV guide, cut down to our channels; empty skips it
+	sourceLists     [][]string // each list's routes, tried in order
 	pushgatewayURL  string
 	jellyfinURL     string
 	jellyfinAPIKey  string
@@ -47,11 +48,9 @@ type config struct {
 }
 
 func loadConfig() config {
-	var urls []string
-	for _, u := range strings.Split(mustEnv("SOURCE_URLS"), ",") {
-		if u = strings.TrimSpace(u); u != "" {
-			urls = append(urls, u)
-		}
+	lists, err := parseSourceLists(mustEnv("SOURCE_URLS"))
+	if err != nil {
+		log.Fatalf("SOURCE_URLS: %v", err)
 	}
 	return config{
 		listenAddr:      getenv("LISTEN_ADDR", ":6879"),
@@ -60,7 +59,7 @@ func loadConfig() config {
 		channelBaseURL:  getenv("CHANNEL_BASE_URL", "http://bifrost:6879/channel/"),
 		aceserveBaseURL: getenv("ACESERVE_BASE_URL", "http://aceserve:6878"),
 		guideSourceURL:  os.Getenv("GUIDE_SOURCE_URL"),
-		sourceURLs:      urls,
+		sourceLists:     lists,
 		pushgatewayURL:  os.Getenv("PUSHGATEWAY_URL"),
 		jellyfinURL:     mustEnv("JELLYFIN_URL"),
 		jellyfinAPIKey:  mustEnv("JELLYFIN_API_KEY"),
@@ -72,6 +71,42 @@ func loadConfig() config {
 		cloudflareAPIToken:  os.Getenv("CLOUDFLARE_API_TOKEN"),
 		admins:              os.Getenv("BIFROST_ADMINS"),
 	}
+}
+
+// parseSourceLists reads one list as comma-separated routes, or several as a JSON array of
+// {"url", "backup": [...]}.
+func parseSourceLists(raw string) ([][]string, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "[") {
+		var routes []string
+		for _, u := range strings.Split(raw, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				routes = append(routes, u)
+			}
+		}
+		if len(routes) == 0 {
+			return nil, fmt.Errorf("no URL")
+		}
+		return [][]string{routes}, nil
+	}
+	var entries []struct {
+		URL    string   `json:"url"`
+		Backup []string `json:"backup"`
+	}
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil, err
+	}
+	var lists [][]string
+	for i, e := range entries {
+		if e.URL == "" {
+			return nil, fmt.Errorf("list %d has no url", i+1)
+		}
+		lists = append(lists, append([]string{e.URL}, e.Backup...))
+	}
+	if len(lists) == 0 {
+		return nil, fmt.Errorf("no list")
+	}
+	return lists, nil
 }
 
 func mustEnv(key string) string {
@@ -96,6 +131,7 @@ type channel struct {
 	group   string
 	hash    string
 	extinf  string
+	list    int // which of the configured lists it came from
 }
 
 func loadState(stateFile string) state {
@@ -323,29 +359,15 @@ func (l *lister) run() {
 	s.totalRuns++
 	log.Printf("Starting execution #%d", s.totalRuns)
 
-	var combined bytes.Buffer
 	sourceHTTPCodes := make(map[string]int)
-
-	// The sources are routes to one IPNS key; a gateway with a stale record serves an older CID, so
-	// merging them would bring dropped channels back. The first answer wins.
-	for _, sourceURL := range cfg.sourceURLs {
-		log.Printf("Downloading: %s", sourceURL)
-		data, code, err := downloadSource(sourceURL)
-		sourceHTTPCodes[hostFromURL(sourceURL)] = code
-
-		if err != nil || code != 200 {
-			log.Printf("  warning: failed (HTTP %d): %v", code, err)
-			s.errors++
-			continue
+	var lists [][]byte
+	for _, routes := range cfg.sourceLists {
+		if data := l.readList(routes, &s, sourceHTTPCodes); data != nil {
+			lists = append(lists, data)
 		}
-		combined.Write(data)
-		// Without the newline the last URL of one source glues to the next #EXTM3U and escapes the dedup.
-		combined.WriteByte('\n')
-		log.Printf("  ok (%d)", code)
-		break
 	}
 
-	if combined.Len() == 0 {
+	if len(lists) == 0 {
 		log.Printf("error: all sources failed")
 		l.board().listRead(0, 0, false, "all sources failed")
 		saveState(stateFile, s)
@@ -353,7 +375,7 @@ func (l *lister) run() {
 		return
 	}
 
-	channels, header := parseAndDedup(combined.Bytes())
+	channels, header := mergeLists(lists)
 	log.Printf("Channels: %d unique after dedup", len(channels))
 
 	order, groups := groupChannels(channels)
@@ -422,6 +444,35 @@ func (l *lister) run() {
 	saveState(stateFile, s)
 	pushMetrics(cfg.pushgatewayURL, s, channels, jellyfinCode, sourceHTTPCodes)
 	log.Printf("Done.")
+}
+
+// readList downloads one list by the first of its routes that answers: they lead to the same list,
+// and a gateway with a stale record serves an older copy, so merging them would bring dropped
+// channels back. When none answers, the last copy read stands in, so one list down drops nothing.
+func (l *lister) readList(routes []string, s *state, codes map[string]int) []byte {
+	sum := sha256.Sum256([]byte(routes[0]))
+	cache := filepath.Join(l.cfg.stateDir, "lists", fmt.Sprintf("%x.m3u", sum[:6]))
+	for _, route := range routes {
+		log.Printf("Downloading: %s", route)
+		data, code, err := downloadSource(route)
+		codes[hostFromURL(route)] = code
+		if err != nil || code != 200 {
+			log.Printf("  warning: failed (HTTP %d): %v", code, err)
+			s.errors++
+			continue
+		}
+		log.Printf("  ok (%d)", code)
+		if err := os.MkdirAll(filepath.Dir(cache), 0o755); err == nil {
+			os.WriteFile(cache, data, 0o644)
+		}
+		return data
+	}
+	data, err := os.ReadFile(cache)
+	if err != nil {
+		return nil
+	}
+	log.Printf("  every route to %s failed, using its last copy", routes[0])
+	return data
 }
 
 // board is where the status page reads from; a lister without a hub (tests) writes to a throwaway.
