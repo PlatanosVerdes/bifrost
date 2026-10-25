@@ -44,9 +44,11 @@ A channel's sources do not degrade together. In the same hour the playing source
 of the same channel downloaded twice that. So a stream that keeps starving moves its viewers to a
 better source of its channel, under rules meant never to leave them with nothing:
 
-- **Only when it has starved for a while.** A probe starts once the stream has been starving (see
-  above) for `SWITCH_AFTER`, so after about 45 s of a download under the bitrate, never while it
-  keeps up.
+- **Only once it owes enough video.** Every sample adds what the download fell short of the bitrate
+  (0.8x for 5 s owes 1 s of video) and takes off what it ran ahead, and a probe starts once the
+  stream owes `SWITCH_BEHIND`: about 10 s into a starve at 0.5x, and within minutes on a source that
+  flaps between 0.9x and just over 1x. Waiting for a starve to last 30 s missed those: each flap above
+  the bitrate restarted the clock, while the TV froze.
 - **One probe at a time, on the whole machine, and rarely.** The probe is a second engine session
   for the candidate's content id, next to the one playing. It lasts the open (at most 15 s) plus
   `PROBE_FOR`, and the channel waits `PROBE_COOLDOWN` after it before another. Candidates are
@@ -60,14 +62,15 @@ better source of its channel, under rules meant never to leave them with nothing
   swarm can give than the rate it will settle at, which on a live stream is close to 1x. Its
   headroom is its download over the channel's measured bitrate, or its own if higher (sources of
   one channel can differ: one measured 470 KB/s, another 850), against the playing source's
-  average over the last `SWITCH_AFTER`.
+  average over the last 30 s.
 - **Clearly better or nothing.** It is switched to when it keeps up, at `SWITCH_MIN_HEADROOM` (1.1x)
   or more, and beats the playing source by `SWITCH_MARGIN` (0.2). When no source keeps up, the
   least bad one is taken only by twice that margin: 0.95x is worth leaving 0.5x for, not 0.7x. A
   candidate with fewer than half the playing source's peers needs one margin more. One that
-  stalled in its last sample, gave fewer than two usable samples, or a playing source that
-  recovered meanwhile and keeps up on average, keeps the stream where it is. One that only
-  recovered between two starves (0.85x on average) does not count as recovered.
+  stalled in its last sample or gave fewer than two usable samples keeps the stream where it is. A
+  playing source that recovered meanwhile and keeps up on average is left only for 1.3x or more,
+  and its margin and a half: a source at 1.0x lost to one at 1.56x. One that only recovered
+  between two starves (0.85x on average) does not count as recovered.
 - **The playing source is not touched until the new one delivers.** Each source has its own
   clock, PIDs and GOP, and splicing a new one in raw froze the Samsung TV on its first switch. So
   every source runs through its own `ffmpeg -c copy`, which starts at the first keyframe and always

@@ -49,7 +49,7 @@ func pick(t *testing.T, url, body string, header map[string]string) (int, string
 func TestPickSwitchesToAnotherSourceOfTheChannel(t *testing.T) {
 	engine := newSourceEngine(map[string]int{slowSource: 4000, fastSource: 4000})
 	srv, h := newSwitchingProxy(t, engine, slowSource, fastSource)
-	h.policy.after = 0
+	h.policy.behind = 0
 	url := srv.URL + "/api/channels/dazn-laliga-1080p/source"
 
 	if code, _ := pick(t, url, `{"id":"`+fastSource+`"}`, nil); code != http.StatusConflict {
@@ -111,7 +111,7 @@ func TestPickOfADeadSourceKeepsTheStream(t *testing.T) {
 	engine := newSourceEngine(map[string]int{slowSource: 4000, fastSource: 4000})
 	engine.dead[fastSource] = true
 	srv, h := newSwitchingProxy(t, engine, slowSource, fastSource)
-	h.policy.after = 0
+	h.policy.behind = 0
 	h.sourceWait = 300 * time.Millisecond
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
