@@ -5,8 +5,8 @@ What bifrost watches while a channel plays, and what it does about it.
 ## The swarm
 
 A channel can open in a second and still stall every minute: the engine downloads slower than the
-stream plays, its buffer runs dry, and the TV gives up and reopens. During a Champions League match
-a 1080p channel of about 800 KB/s got 527–750 KB/s from its swarm, and nothing in bifrost said so.
+stream plays, its buffer runs dry, and the TV gives up and reopens. One evening a 1080p channel of
+about 800 KB/s got 527–750 KB/s from its swarm, and nothing in bifrost said so.
 
 So while a stream plays, bifrost asks the engine how its swarm is doing every 5 s. It does not open
 anything to ask: aceserve redirects `/ace/getstream` to `/ace/r/<infohash>/<session>`, and
@@ -39,7 +39,7 @@ watches any more drops out of the group.
 
 ## Moving to a better source
 
-A channel's sources do not degrade together. In the same match the playing source sat at
+A channel's sources do not degrade together. In the same hour the playing source sat at
 0.65–0.95x of its bitrate for minutes, and the TV cut out or lost its audio, while another source
 of the same channel downloaded twice that. So a stream that keeps starving moves its viewers to a
 better source of its channel, under rules meant never to leave them with nothing:
@@ -76,7 +76,7 @@ better source of its channel, under rules meant never to leave them with nothing
   new run's timestamps and continuity counters to carry on right after the old run's, drops the
   audio from before the new keyframe, and gives a PMT that changed (other codecs or tracks) the
   next version, so the player sees one stream. The picture jumps (another source is at another
-  point of the match) but does not stall, and the delay to live does not grow. A remux that never
+  point of the broadcast) but does not stall, and the delay to live does not grow. A remux that never
   delivers within 15 s keeps the old source. Only then is the old session closed, and the new
   source becomes the channel's last good one. The remux costs ~0.6% of a Pi 4 core and ~8 MB per
   stream; without ffmpeg (`FFMPEG=off`, or not found) sources are relayed raw, packet-aligned, and a
@@ -102,7 +102,7 @@ Each playing stream in `/api/status` carries:
 
 A channel's 720p and 1080p versions are separate entries with the same guide id. When a channel
 starves and none of its own sources is clearly better, its lower versions' sources (closest first)
-are probed the same way, and the stream steps down to one that keeps up: same match, fewer pixels,
+are probed the same way, and the stream steps down to one that keeps up: same broadcast, fewer pixels,
 no stalls. After `5m` stable there, its own sources are probed again and it steps back up only to
 one measuring 1.3x or more, so it does not bounce. Jellyfin shows the TV a short message on each
 step ("Switched to 720p: the 1080p source was too slow", "Back to 1080p"): one call to its sessions
@@ -130,7 +130,7 @@ see [slate/README.md](../slate/README.md) to rebuild them.
 
 Jellyfin can lose track of a session and keep pulling a channel with nobody in front of it: a TV
 cut off mid-stream (a bifrost restart) reopens the channel, and its later "stopped" is applied to the
-old session, so the engine goes on downloading a match for nobody. Once a minute, while a stream is
+old session, so the engine goes on downloading a stream for nobody. Once a minute, while a stream is
 open, bifrost asks Jellyfin which channels its sessions play. A stream whose every viewer is Jellyfin
 (by User-Agent) and that no session has played for `ORPHAN_AFTER` in a row is let go, with a
 `[proxy] … closed: no Jellyfin session has played it` line. It never closes on doubt: not while a
