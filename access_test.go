@@ -701,3 +701,49 @@ func TestAccessListsAreCached(t *testing.T) {
 		t.Fatalf("bob missing after the edit: %v", got.Groups[0].Members)
 	}
 }
+
+func TestAccessRoles(t *testing.T) {
+	f := newFakeCloudflare(t)
+	a := f.access("boss@example.com")
+	dir := t.TempDir()
+	a.granted = loadAdminRoles(dir)
+	role := func(body string) (int, string) {
+		w := change(t, f, a, "PATCH", body)
+		var got accessReply
+		json.Unmarshal(w.Body.Bytes(), &got)
+		return w.Code, got.Error
+	}
+	isAdmin := func(email string) bool {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Cf-Access-Jwt-Assertion", f.token(email))
+		_, admin := a.who(r)
+		return admin
+	}
+
+	if isAdmin("ana@example.com") {
+		t.Fatal("ana is an admin before anyone made her one")
+	}
+	if code, err := role(`{"email":"ANA@example.com","role":"admin"}`); code != 200 {
+		t.Fatalf("making a member an admin answered %d %s", code, err)
+	}
+	if !isAdmin("ana@example.com") || !loadAdminRoles(dir).has("ana@example.com") {
+		t.Error("ana is not an admin after the change, or it was not saved")
+	}
+	for _, c := range []struct{ body, want string }{
+		{`{"email":"zoe@example.com","role":"admin"}`, "Only someone on this page's members"},
+		{`{"email":"boss@example.com","role":"viewer"}`, "set in bifrost's settings"},
+		{`{"email":"dad@example.com","role":"admin"}`, "Only someone on this page's members"},
+		{`{"email":"ana@example.com","role":"owner"}`, "admin or viewer"},
+	} {
+		if code, err := role(c.body); code == 200 || !strings.Contains(err, c.want) {
+			t.Errorf("%s answered %d %q, want an error about %q", c.body, code, err, c.want)
+		}
+	}
+	if code, _ := role(`{"email":"ana@example.com","role":"viewer"}`); code != 200 || isAdmin("ana@example.com") {
+		t.Error("ana is still an admin after being made a viewer")
+	}
+	role(`{"email":"ana@example.com","role":"admin"}`)
+	if w := change(t, f, a, "DELETE", `{"group":"g-own","email":"ana@example.com"}`); w.Code != 200 || isAdmin("ana@example.com") {
+		t.Errorf("removing ana answered %d and left her admin %t", w.Code, isAdmin("ana@example.com"))
+	}
+}

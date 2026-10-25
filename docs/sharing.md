@@ -34,3 +34,12 @@ who opens it (its sender checking it) goes to the page and leaves it unused; the
 open it again until it expires. Since anyone can sign in to the join app, a wrong or used link is
 answered from memory, without a call to Cloudflare. A link to a list another app has started to use
 since stops working, as editing it by email would.
+
+## Roles
+
+Each member in the Share dialog has a role: Viewer or Admin. An admin can invite, remove people and
+change roles; a viewer only uses the page. Admins made from the dialog are kept in
+`STATE_DIR/admins.json` on top of `BIFROST_ADMINS`, whose admins cannot be changed from the page.
+Nobody can change their own role, only a member can be made an admin, and removing someone also
+drops their admin role.
+
