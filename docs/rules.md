@@ -58,10 +58,12 @@ channel that drops out and comes back in consecutive passes costs one refresh, n
 
 ## The engine and the VPN
 
-bifrost only needs HTTP to the engine. On a line where the ISP intercepts the AceStream API during
-matches (Spain, with a self-signed certificate on api.acestream.me), only the engine's HTTPS should
-go through a VPN, with its P2P on the home line: an engine entirely behind a VPN gets no inbound
-peers, and channels that start in 2 seconds took 30, or not at all. With gluetun:
+bifrost only needs HTTP to the engine. On a line where the ISP blocks the AceStream API and the
+engine's content servers (a self-signed certificate on api.acestream.me, a block page over plain
+HTTP), only the engine's HTTP and HTTPS should go through a VPN, with its P2P on the home line: an
+engine entirely behind a VPN gets no inbound peers, and channels that start in 2 seconds took 30, or
+not at all. With HTTPS alone through the VPN, ids the engine has seen before still open and new ones
+fail with `failed to load content`. With gluetun:
 
 ```yaml
 gluetun:
@@ -70,9 +72,10 @@ gluetun:
 aceserve:
   network_mode: host
   environment:
-    - https_proxy=http://127.0.0.1:8888   # the engine is Python; urllib honours it
+    - http_proxy=http://127.0.0.1:8888    # the engine is Python; urllib honours both
+    - https_proxy=http://127.0.0.1:8888
     - no_proxy=localhost,127.0.0.1
 ```
 
 An engine on a bridge network resolves names itself against public DNS and cannot find `gluetun` by
-name: point `https_proxy` at an address, such as the network's gateway.
+name: point the proxies at an address, such as the network's gateway.
