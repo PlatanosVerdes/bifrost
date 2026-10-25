@@ -21,9 +21,9 @@ const (
 	logEvery      = 10 * time.Second
 	firstReadSize = 64 * 1024
 	chunkSize     = 32 * 1024
-	// A viewer this far behind (8 MB, about 9 s of a 7 Mbit/s channel) is dropped. Chunks are shared, so
-	// this bounds memory per channel, not per viewer.
-	viewerBacklog = 256
+	// A viewer this far behind (32 MB, about 30 s of an 8 Mbit/s channel) is dropped: Jellyfin pauses
+	// reading for seconds while it refreshes its guide. Chunks are shared, so this bounds memory per channel.
+	viewerBacklog = 1024
 )
 
 // One upstream per channel, shared: the engine serves one connection per channel, and Jellyfin's codec

@@ -28,9 +28,10 @@ stream, and the old source is closed only once the new one has delivered (see
 a new download stops that player's previous one, so a probe without a pid killed the stream it was
 meant to rescue.
 
-**Whole 32 KB chunks.** A viewer is dropped once it falls 256 chunks behind. The engine hands data
-over a few KB at a time, and counting those as chunks made the backlog a few hundred KB: the opening
-burst filled it and dropped the TV the moment the channel started.
+**Whole 32 KB chunks.** A viewer is dropped once it falls 1024 chunks behind, about 30 s. The engine
+hands data over a few KB at a time, and counting those as chunks made the backlog a few hundred KB:
+the opening burst filled it and dropped the TV the moment the channel started. At 256 (about 9 s), a
+Jellyfin guide refresh on a loaded Pi stalled its reading long enough to drop the TV mid-broadcast.
 
 **One URL per channel, never one per source.** Jellyfin keys a channel on the MD5 of its URL. The
 list republishes the same channels under new content ids several times an hour, and an id in the URL
