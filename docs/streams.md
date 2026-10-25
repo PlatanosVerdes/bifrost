@@ -5,8 +5,8 @@ What bifrost watches while a channel plays, and what it does about it.
 ## The swarm
 
 A channel can open in a second and still stall every minute: the engine downloads slower than the
-stream plays, its buffer runs dry, and the TV gives up and reopens. During a busy evening
-a 1080p channel of about 800 KB/s got 527–750 KB/s from its swarm, and nothing in bifrost said so.
+stream plays, its buffer runs dry, and the TV gives up and reopens. One evening a 1080p channel of
+about 800 KB/s got 527–750 KB/s from its swarm, and nothing in bifrost said so.
 
 So while a stream plays, bifrost asks the engine how its swarm is doing every 5 s. It does not open
 anything to ask: aceserve redirects `/ace/getstream` to `/ace/r/<infohash>/<session>`, and
@@ -39,7 +39,7 @@ watches any more drops out of the group.
 
 ## Moving to a better source
 
-A channel's sources do not degrade together. In the same broadcast the playing source sat at
+A channel's sources do not degrade together. In the same hour the playing source sat at
 0.65–0.95x of its bitrate for minutes, and the TV cut out or lost its audio, while another source
 of the same channel downloaded twice that. So a stream that keeps starving moves its viewers to a
 better source of its channel, under rules meant never to leave them with nothing:

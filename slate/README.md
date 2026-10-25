@@ -33,4 +33,4 @@ Check the result with `ffprobe -count_frames`: 600 video frames, 1125 audio fram
 
 `logo.png` is the wordmark (Unbounded 700) and `text.png` the off-air caption (Figtree 500), both on a
 transparent background. Keep 1280x720, H.264 Main, AAC stereo 48 kHz: the formats the sources use, so
-Jellyfin decides the same for a slate as for the broadcast.
+Jellyfin decides the same for a slate as for a channel.

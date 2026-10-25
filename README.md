@@ -9,11 +9,14 @@
   <img src="https://img.shields.io/github/go-mod/go-version/PlatanosVerdes/bifrost" alt="Go version">
 </p>
 
-Reads an AceStream channel list published on IPFS, writes Jellyfin's M3U playlist and a cut-down
-XMLTV guide, and serves `/channel/<slug>`: the proxy Jellyfin plays from.
+Reads an AceStream channel list you give it, writes Jellyfin's M3U playlist and a cut-down XMLTV
+guide, and serves `/channel/<slug>`: the proxy Jellyfin plays from.
+
+bifrost ships no channels and points at no list: what it plays is the list you configure, and you
+are responsible for having the rights to it.
 
 ```
-IPFS list ──> bifrost (list loop) ──> channels_ace.m3u + guide.xml ──> Jellyfin
+M3U list ──> bifrost (list loop) ──> channels_ace.m3u + guide.xml ──> Jellyfin
                      │ catalog
 Jellyfin ──> bifrost (proxy) /channel/<slug> ──> aceserve /ace/getstream?id=<source> ──> ffmpeg -c copy
 ```
@@ -39,7 +42,7 @@ It does not run the AceStream engine or a VPN; it talks to an engine over HTTP.
 bifrost:
   image: ghcr.io/platanosverdes/bifrost:${BIFROST_VERSION}
   environment:
-    - SOURCE_URLS=http://kubo:8080/ipns/<key>/channels.m3u
+    - SOURCE_URLS=http://lists.local/channels.m3u
     - ACESERVE_BASE_URL=http://172.19.0.1:6878
     - JELLYFIN_URL=http://jellyfin:8096
     - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
