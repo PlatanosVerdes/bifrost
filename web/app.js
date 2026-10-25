@@ -662,7 +662,7 @@ class BifrostApp extends LitElement {
                 ? html`<div class="who">${avatar(this.access.me)}<span>${this.access.me}</span></div>
                   ${this.access.admin ? html`<button class="item" @click=${() => this.share()}>Share…</button>` : nothing}
                   <a class="item" href="/cdn-cgi/access/logout">Sign out</a>`
-                : html`<div class="who">${avatar("")}<span>Not signed in. Open this page through its public address to sign in.</span></div>`}
+                : html`<div class="who">${avatar("")}<span>Not signed in: this page was reached without going through the sign-in. Open it from outside the home network to sign in and manage who has access.</span></div>`}
             </div>` : nothing}
         </div>
       </header>
