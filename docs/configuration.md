@@ -3,6 +3,7 @@
 | Variable | Default | What it is |
 | :--- | :--- | :--- |
 | `SOURCE_URLS` | required | The channel list: comma-separated routes to it, the first that answers wins. Several lists as JSON, see below |
+| `KEEP_DROPPED` | `72h` | How long a channel or source the list dropped stays in the playlist (see [Rules](rules.md#the-list-drops-what-still-plays)). `0` plays the list exactly as it is, for a list already curated upstream that removes channels on purpose |
 | `ACESERVE_BASE_URL` | `http://aceserve:6878` | The engine's HTTP API |
 | `CHANNEL_BASE_URL` | `http://bifrost:6879/channel/` | How Jellyfin reaches this proxy; written into the M3U |
 | `GUIDE_SOURCE_URL` | empty (no guide) | Full XMLTV guide, cut down into `guide.xml` |
