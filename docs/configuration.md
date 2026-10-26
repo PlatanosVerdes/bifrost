@@ -3,6 +3,7 @@
 | Variable | Default | What it is |
 | :--- | :--- | :--- |
 | `SOURCE_URLS` | required | The channel list: comma-separated routes to it, the first that answers wins. Several lists as JSON, see below |
+| `KEEP_DROPPED` | `72h` | How long a channel or source the list dropped stays in the playlist (see [Rules](rules.md#the-list-drops-what-still-plays)). `0` plays the list exactly as it is, for a list already curated upstream that removes channels on purpose |
 | `ACESERVE_BASE_URL` | `http://aceserve:6878` | The engine's HTTP API |
 | `CHANNEL_BASE_URL` | `http://bifrost:6879/channel/` | How Jellyfin reaches this proxy; written into the M3U |
 | `GUIDE_SOURCE_URL` | empty (no guide) | Full XMLTV guide, cut down into `guide.xml` |
@@ -36,6 +37,9 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 `SOURCE_URLS` takes a JSON array for more than one list, each with optional backup routes to the
 same list. It can also be the path of a file holding that array (it starts with `/`), reread on
 every pass so an edit applies without a restart:
+
+Lines starting with `//` are skipped, so a list can be kept in the file switched off, ready to
+come back with one edit and no restart.
 
 ```json
 [

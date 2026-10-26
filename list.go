@@ -33,9 +33,10 @@ type config struct {
 	stateDir        string // run counters and the cached full guide
 	channelBaseURL  string // how Jellyfin reaches this proxy: <base><slug>
 	aceserveBaseURL string
-	guideSourceURL  string     // full XMLTV guide, cut down to our channels; empty skips it
-	sourceLists     [][]string // each list's routes, tried in order
-	sourceFile      string     // where sourceLists is read from on every pass, when given as a file
+	guideSourceURL  string        // full XMLTV guide, cut down to our channels; empty skips it
+	sourceLists     [][]string    // each list's routes, tried in order
+	sourceFile      string        // where sourceLists is read from on every pass, when given as a file
+	keepDropped     time.Duration // how long what the list dropped is kept; 0 trusts the list as it is
 	pushgatewayURL  string
 	jellyfinURL     string
 	jellyfinAPIKey  string
@@ -71,6 +72,7 @@ func loadConfig() config {
 		guideSourceURL:  os.Getenv("GUIDE_SOURCE_URL"),
 		sourceLists:     lists,
 		sourceFile:      file,
+		keepDropped:     getduration("KEEP_DROPPED", keepDroppedFor),
 		pushgatewayURL:  os.Getenv("PUSHGATEWAY_URL"),
 		jellyfinURL:     mustEnv("JELLYFIN_URL"),
 		jellyfinAPIKey:  mustEnv("JELLYFIN_API_KEY"),
@@ -120,12 +122,19 @@ func parseSourceLists(raw string) ([][]string, error) {
 	return lists, nil
 }
 
+// readSourceFile skips lines starting with //, so a list can be left in the file switched off.
 func readSourceFile(path string) ([][]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseSourceLists(string(b))
+	var kept []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			kept = append(kept, line)
+		}
+	}
+	return parseSourceLists(strings.Join(kept, "\n"))
 }
 
 func mustEnv(key string) string {
@@ -407,9 +416,11 @@ func (l *lister) run() {
 
 	order, groups := groupChannels(channels)
 	if l.memory == nil {
-		l.memory = &memory{path: filepath.Join(cfg.stateDir, "remembered.json")}
+		l.memory = &memory{path: filepath.Join(cfg.stateDir, "remembered.json"), keepFor: cfg.keepDropped}
 	}
-	order = l.memory.keep(order, groups, l.failed, time.Now())
+	if cfg.keepDropped > 0 {
+		order = l.memory.keep(order, groups, l.failed, time.Now())
+	}
 	order = l.keepWatched(order, groups)
 	l.catalog.set(order, groups)
 	newM3U := stableM3U(header, cfg.channelBaseURL, order, groups)

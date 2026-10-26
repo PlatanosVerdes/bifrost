@@ -24,8 +24,16 @@ type rememberedChannel struct {
 
 type memory struct {
 	path     string
+	keepFor  time.Duration // keepDroppedFor when zero
 	loaded   bool
 	channels []rememberedChannel // in playlist order
+}
+
+func (m *memory) window() time.Duration {
+	if m.keepFor > 0 {
+		return m.keepFor
+	}
+	return keepDroppedFor
 }
 
 func (m *memory) load() {
@@ -70,7 +78,7 @@ func (m *memory) keep(order []string, groups map[string]*channelGroup, failed fu
 			if !ok {
 				since = now
 			}
-			if !failed(id) && now.Sub(since) < keepDroppedFor {
+			if !failed(id) && now.Sub(since) < m.window() {
 				droppedAt[id] = since
 				g.IDs = append(g.IDs, id)
 				if g.kept == nil {

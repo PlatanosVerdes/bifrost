@@ -102,3 +102,10 @@ func TestKeptSourceIsForgottenThreeDaysAfterTheListDroppedIt(t *testing.T) {
 		t.Errorf("order %v, first %+v: want the source forgotten three days after it left again", order, groups[order[0]])
 	}
 }
+
+func TestAShorterWindowForgetsSooner(t *testing.T) {
+	m := &memory{keepFor: time.Hour}
+	if m.window() != time.Hour || (&memory{}).window() != keepDroppedFor {
+		t.Fatal("window")
+	}
+}
