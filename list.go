@@ -122,12 +122,19 @@ func parseSourceLists(raw string) ([][]string, error) {
 	return lists, nil
 }
 
+// readSourceFile skips lines starting with //, so a list can be left in the file switched off.
 func readSourceFile(path string) ([][]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseSourceLists(string(b))
+	var kept []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			kept = append(kept, line)
+		}
+	}
+	return parseSourceLists(strings.Join(kept, "\n"))
 }
 
 func mustEnv(key string) string {

@@ -38,6 +38,9 @@ Jellyfin's tuner points at `/data/channels_ace.m3u` and its XMLTV provider at `/
 same list. It can also be the path of a file holding that array (it starts with `/`), reread on
 every pass so an edit applies without a restart:
 
+Lines starting with `//` are skipped, so a list can be kept in the file switched off, ready to
+come back with one edit and no restart.
+
 ```json
 [
   {"url": "http://kubo:8080/ipns/<key>/list.m3u", "backup": ["https://ipfs.io/ipns/<key>/list.m3u"]},
