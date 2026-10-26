@@ -6,7 +6,7 @@
 | `KEEP_DROPPED` | `72h` | How long a channel or source the list dropped stays in the playlist (see [Rules](rules.md#the-list-drops-what-still-plays)). `0` plays the list exactly as it is, for a list already curated upstream that removes channels on purpose |
 | `ACESERVE_BASE_URL` | `http://aceserve:6878` | The engine's HTTP API |
 | `CHANNEL_BASE_URL` | `http://bifrost:6879/channel/` | How Jellyfin reaches this proxy; written into the M3U |
-| `GUIDE_SOURCE_URL` | empty (no guide) | Full XMLTV guide, cut down into `guide.xml` |
+| `GUIDE_SOURCE_URL` | empty (no guide) | Full XMLTV guides, comma-separated (plain or `.gz`), cut down together into one `guide.xml`. A channel takes its programmes from the first guide that has its id |
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY` | required | To run Refresh Guide |
 | `PUSHGATEWAY_URL` | empty | Where the `acestream_*` metrics go |
 | `OUTPUT_FILE` | `/data/channels_ace.m3u` | Jellyfin's playlist; `guide.xml` is written next to it |

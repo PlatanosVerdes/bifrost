@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,12 +35,23 @@ func fetchGuide(sourceURL, cache string, maxAge time.Duration) (bool, error) {
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("guide download: HTTP %d", resp.StatusCode)
 	}
+	body := bufio.NewReader(resp.Body)
+	var src io.Reader = body
+	// Several published guides are gzipped (.xml.gz); kept unpacked so a trim streams plain XML.
+	if magic, _ := body.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		zr, err := gzip.NewReader(body)
+		if err != nil {
+			return false, err
+		}
+		defer zr.Close()
+		src = zr
+	}
 	tmp := cache + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return false, err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	if _, err := io.Copy(f, src); err != nil {
 		f.Close()
 		return false, err
 	}
@@ -64,20 +77,68 @@ func tvgIDs(groups map[string]*channelGroup) []string {
 	return ids
 }
 
-// Streams the full guide token by token instead of holding it in memory. Reports whether out changed.
-func trimGuide(full, out string, ids []string) (bool, error) {
-	want := map[string]bool{}
-	for _, id := range ids {
-		want[id] = true
+// Streams the full guides token by token instead of holding them in memory, into one guide.xml.
+// A channel and its programmes come from the guide that owner names, so two guides that both carry
+// an id do not double its programmes; without owner every guide counts. Reports whether out changed.
+func trimGuide(fulls []string, out string, ids []string, owner map[string]int) (bool, error) {
+	var root *xml.StartElement
+	var body bytes.Buffer
+	for i, full := range fulls {
+		want := map[string]bool{}
+		for _, id := range ids {
+			if o, ok := owner[id]; owner == nil || (ok && o == i) {
+				want[id] = true
+			}
+		}
+		start, children, err := trimOne(full, want)
+		if err != nil {
+			if i == 0 {
+				return false, err
+			}
+			log.Printf("warning: guide %s: %v", filepath.Base(full), err)
+			continue
+		}
+		if root == nil {
+			root = &start
+		}
+		body.Write(children)
 	}
-	in, err := os.Open(full)
-	if err != nil {
-		return false, err
+	if root == nil {
+		return false, fmt.Errorf("no guide could be read")
 	}
-	defer in.Close()
 
 	var buf bytes.Buffer
 	buf.WriteString(xml.Header)
+	enc := xml.NewEncoder(&buf)
+	if err := enc.EncodeToken(*root); err != nil {
+		return false, err
+	}
+	if err := enc.Flush(); err != nil {
+		return false, err
+	}
+	buf.Write(body.Bytes())
+	buf.WriteString("</" + root.Name.Local + ">")
+
+	if old, err := os.ReadFile(out); err == nil && bytes.Equal(old, buf.Bytes()) {
+		return false, nil
+	}
+	tmp := filepath.Join(filepath.Dir(out), "."+filepath.Base(out)+".tmp")
+	if err := os.WriteFile(tmp, buf.Bytes(), 0644); err != nil {
+		return false, err
+	}
+	return true, os.Rename(tmp, out)
+}
+
+// trimOne returns a guide's root element and its wanted children, encoded; nothing on an error, so a
+// guide broken half way adds none of itself.
+func trimOne(full string, want map[string]bool) (xml.StartElement, []byte, error) {
+	var root xml.StartElement
+	in, err := os.Open(full)
+	if err != nil {
+		return root, nil, err
+	}
+	defer in.Close()
+	var buf bytes.Buffer
 	enc := xml.NewEncoder(&buf)
 	dec := xml.NewDecoder(bufio.NewReader(in))
 	dec.Strict = false
@@ -89,15 +150,13 @@ func trimGuide(full, out string, ids []string) (bool, error) {
 			break
 		}
 		if err != nil {
-			return false, err
+			return root, nil, err
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
 			depth++
 			if depth == 1 {
-				if err := enc.EncodeToken(t.Copy()); err != nil {
-					return false, err
-				}
+				root = t.Copy()
 				continue
 			}
 			if depth == 2 {
@@ -107,40 +166,34 @@ func trimGuide(full, out string, ids []string) (bool, error) {
 				}
 				if !want[attr(t, key)] {
 					if err := dec.Skip(); err != nil {
-						return false, err
+						return root, nil, err
 					}
 					depth--
 					continue
 				}
 			}
 			if err := enc.EncodeToken(t.Copy()); err != nil {
-				return false, err
+				return root, nil, err
 			}
 		case xml.EndElement:
 			depth--
-			if err := enc.EncodeToken(t); err != nil {
-				return false, err
+			if depth >= 1 {
+				if err := enc.EncodeToken(t); err != nil {
+					return root, nil, err
+				}
 			}
 		case xml.CharData:
 			if depth >= 2 {
 				if err := enc.EncodeToken(t.Copy()); err != nil {
-					return false, err
+					return root, nil, err
 				}
 			}
 		}
 	}
 	if err := enc.Flush(); err != nil {
-		return false, err
+		return root, nil, err
 	}
-
-	if old, err := os.ReadFile(out); err == nil && bytes.Equal(old, buf.Bytes()) {
-		return false, nil
-	}
-	tmp := filepath.Join(filepath.Dir(out), "."+filepath.Base(out)+".tmp")
-	if err := os.WriteFile(tmp, buf.Bytes(), 0644); err != nil {
-		return false, err
-	}
-	return true, os.Rename(tmp, out)
+	return root, buf.Bytes(), nil
 }
 
 func attr(t xml.StartElement, name string) string {
