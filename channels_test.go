@@ -124,7 +124,7 @@ func TestGuideKeepsOnlyOurChannels(t *testing.T) {
 	if !sameIDs(ids, []string{"Channel A HD", "Channel+ D HD"}) {
 		t.Fatalf("tvg ids = %v", ids)
 	}
-	if changed, err := trimGuide(full, out, ids); err != nil || !changed {
+	if changed, err := trimGuide([]string{full}, out, ids, nil); err != nil || !changed {
 		t.Fatalf("trim: changed=%v err=%v", changed, err)
 	}
 	got, _ := os.ReadFile(out)
@@ -132,7 +132,7 @@ func TestGuideKeepsOnlyOurChannels(t *testing.T) {
 		strings.Contains(string(got), `id="Some Other"`) {
 		t.Errorf("trimmed guide:\n%s", got)
 	}
-	if changed, _ := trimGuide(full, out, ids); changed {
+	if changed, _ := trimGuide([]string{full}, out, ids, nil); changed {
 		t.Error("an identical guide was rewritten")
 	}
 }

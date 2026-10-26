@@ -33,7 +33,7 @@ type config struct {
 	stateDir        string // run counters and the cached full guide
 	channelBaseURL  string // how Jellyfin reaches this proxy: <base><slug>
 	aceserveBaseURL string
-	guideSourceURL  string        // full XMLTV guide, cut down to our channels; empty skips it
+	guideSourceURL  string        // full XMLTV guides, comma-separated, cut down to our channels; empty skips it
 	sourceLists     [][]string    // each list's routes, tried in order
 	sourceFile      string        // where sourceLists is read from on every pass, when given as a file
 	keepDropped     time.Duration // how long what the list dropped is kept; 0 trusts the list as it is
@@ -376,9 +376,10 @@ type lister struct {
 	catalog *catalog
 	hub     *hub
 
-	memory     *memory   // what the list dropped, kept until it fails
-	refreshDue time.Time // when Jellyfin is due a refresh; zero when nothing is waiting
-	guideIDs   []string  // the guide ids guide.xml was last cut down for
+	memory     *memory     // what the list dropped, kept until it fails
+	refreshDue time.Time   // when Jellyfin is due a refresh; zero when nothing is waiting
+	guideIDs   []string    // the guide ids guide.xml was last cut down for
+	guideIndex *guideIndex // the guides' channels by name, reread when a guide is downloaded again
 }
 
 func (l *lister) run() {
@@ -422,20 +423,41 @@ func (l *lister) run() {
 		order = l.memory.keep(order, groups, l.failed, time.Now())
 	}
 	order = l.keepWatched(order, groups)
+
+	// The guides come first: a channel its list gave no guide id may get one from them by name.
+	guides := guideSources(cfg.guideSourceURL, cfg.stateDir)
+	var guideFiles []string
+	fresh := false
+	for _, src := range guides {
+		got, err := fetchGuide(src.url, src.file, guideMaxAge)
+		if err != nil {
+			log.Printf("warning: guide download failed, keeping the last one: %s: %v", src.url, err)
+		}
+		fresh = fresh || got
+		guideFiles = append(guideFiles, src.file)
+	}
+	if len(guides) > 0 && (fresh || l.guideIndex == nil) {
+		if idx, err := loadGuideIndex(guideFiles); err != nil {
+			log.Printf("warning: reading the guides' channels: %v", err)
+		} else {
+			l.guideIndex = idx
+		}
+	}
+	matchGuideIDs(order, groups, l.guideIndex)
+
 	l.catalog.set(order, groups)
 	newM3U := stableM3U(header, cfg.channelBaseURL, order, groups)
 
 	changed := false
-	if cfg.guideSourceURL != "" {
-		cache := filepath.Join(cfg.stateDir, "guide-full.xml")
-		fresh, err := fetchGuide(cfg.guideSourceURL, cache, guideMaxAge)
-		if err != nil {
-			log.Printf("warning: guide download failed, keeping the last one: %v", err)
-		}
+	if len(guides) > 0 {
 		ids := tvgIDs(groups)
 		if fresh || !sameIDs(ids, l.guideIDs) {
 			guide := filepath.Join(filepath.Dir(cfg.outputFile), "guide.xml")
-			if guideChanged, err := trimGuide(cache, guide, ids); err != nil {
+			var owner map[string]int
+			if l.guideIndex != nil {
+				owner = l.guideIndex.owner
+			}
+			if guideChanged, err := trimGuide(guideFiles, guide, ids, owner); err != nil {
 				log.Printf("error trimming the guide: %v", err)
 			} else {
 				l.guideIDs = ids
