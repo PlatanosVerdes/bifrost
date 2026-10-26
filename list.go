@@ -457,7 +457,11 @@ func (l *lister) run() {
 		s.successNoChanges++
 	}
 
-	l.board().listRead(len(order), len(channels), changed, "")
+	sources := 0
+	for _, slug := range order {
+		sources += len(groups[slug].IDs)
+	}
+	l.board().listRead(len(order), sources, changed, "")
 	if changed {
 		l.refreshDue = time.Now().Add(refreshDebounce)
 		log.Printf("Jellyfin refresh due after %s without further changes", refreshDebounce)
