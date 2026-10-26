@@ -14,15 +14,50 @@ import (
 )
 
 func TestNormNameKeepsWhatTellsChannelsApart(t *testing.T) {
-	for in, want := range map[string]string{
-		"DAZN Baloncesto 1080p **": "dazn baloncesto",
-		"M+ Liga de Campeones 6":   "m plus liga de campeones 6",
-		"BBC HD [PL]":              "bbc",
-		"Sky.Sports.F1.HD.uk":      "sky sports f1 uk",
-		"Channel D":                "channel d",
+	for in, want := range map[string][2]string{
+		"DAZN Baloncesto 1080p **": {"dazn baloncesto", "dazn baloncesto"},
+		"M+ Liga de Campeones 6":   {"m plus liga de campeones 6", "m plus liga de campeones 6"},
+		"BBC HD [PL]":              {"bbc pl", "bbc"},
+		"Sky.Sports.F1.HD.uk":      {"sky sports f 1 uk", "sky sports f 1 uk"},
+		"SPORT TV3 720p":           {"sport tv 3", "sport tv 3"},
+		"DE | Rally TV":            {"de rally tv", "rally tv"},
+		"FR · beIN SPORTS 3":       {"fr bein sports 3", "bein sports 3"},
+		"Red Bull TV (DAZN)":       {"red bull tv dazn", "red bull tv"},
 	} {
-		if got := normName(in); got != want {
-			t.Errorf("normName(%q) = %q, want %q", in, got, want)
+		if got := normName(in, false); got != want[0] {
+			t.Errorf("strict normName(%q) = %q, want %q", in, got, want[0])
+		}
+		if got := normName(in, true); got != want[1] {
+			t.Errorf("loose normName(%q) = %q, want %q", in, got, want[1])
+		}
+	}
+}
+
+func TestCountryPrefixesMatchOnlyWhenNothingStricterDoes(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "g.xml")
+	os.WriteFile(file, []byte(`<tv>
+  <channel id="DE | Rally TV"><display-name>DE | Rally TV</display-name></channel>
+  <channel id="Red Bull TV (DAZN)"><display-name>Red Bull TV (DAZN)</display-name></channel>
+  <channel id="Red Bull TV"><display-name>Red Bull TV</display-name></channel>
+  <channel id="PT | Sport TV 3"><display-name>PT | Sport TV 3</display-name></channel>
+  <channel id="FR · beIN SPORTS 3"><display-name>FR · beIN SPORTS 3</display-name></channel>
+  <channel id="UK | Sky News"><display-name>UK | Sky News</display-name></channel>
+  <channel id="DE | Sky News"><display-name>DE | Sky News</display-name></channel>
+</tv>`), 0o644)
+	idx, err := loadGuideIndex([]string{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"RALLY TV 1080p":   "DE | Rally TV",
+		"Red Bull TV":      "Red Bull TV", // the strict form tells it from the DAZN one
+		"SPORT TV3 720p":   "PT | Sport TV 3",
+		"Bein Sports 3 TR": "", // a different country is a different channel
+		"Sky News":         "", // two countries carry it: no guide beats a wrong one
+	} {
+		if got := idx.match(name); got != want {
+			t.Errorf("match(%q) = %q, want %q", name, got, want)
 		}
 	}
 }
