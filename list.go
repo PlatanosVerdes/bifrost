@@ -409,7 +409,7 @@ func (l *lister) run() {
 	if l.memory == nil {
 		l.memory = &memory{path: filepath.Join(cfg.stateDir, "remembered.json")}
 	}
-	order = l.memory.keep(order, groups, l.failed)
+	order = l.memory.keep(order, groups, l.failed, time.Now())
 	order = l.keepWatched(order, groups)
 	l.catalog.set(order, groups)
 	newM3U := stableM3U(header, cfg.channelBaseURL, order, groups)

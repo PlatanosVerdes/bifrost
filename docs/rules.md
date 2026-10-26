@@ -37,7 +37,8 @@ Jellyfin guide refresh on a loaded Pi stalled its reading long enough to drop th
 one evening it went from 151 sources to 73, taking the only good source of a channel being watched
 and whole channels with it. bifrost keeps everything the list has carried, in its old place in the
 playlist, so Jellyfin's playlist does not change and needs no guide refresh. A kept source goes
-after the listed ones and is forgotten once it fails to open; a channel goes with its last source.
+after the listed ones and is forgotten once it fails to open or three days after it left the list;
+a channel goes with its last source.
 The page marks a kept source "Not in the list".
 
 **One URL per channel, never one per source.** Jellyfin keys a channel on the MD5 of its URL. The

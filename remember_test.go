@@ -5,13 +5,19 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func pass(t *testing.T, m *memory, list string, failed ...string) (string, []string, map[string]*channelGroup) {
 	t.Helper()
+	return passAt(t, m, list, time.Now(), failed...)
+}
+
+func passAt(t *testing.T, m *memory, list string, now time.Time, failed ...string) (string, []string, map[string]*channelGroup) {
+	t.Helper()
 	sources, header := parseAndDedup([]byte(list))
 	order, groups := groupChannels(sources)
-	order = m.keep(order, groups, func(id string) bool { return strings.Contains(strings.Join(failed, " "), id) })
+	order = m.keep(order, groups, func(id string) bool { return strings.Contains(strings.Join(failed, " "), id) }, now)
 	return stableM3U(header, "http://bifrost:6879/channel/", order, groups), order, groups
 }
 
@@ -72,5 +78,27 @@ func TestListedSourceStaysWhenItFails(t *testing.T) {
 	_, order, groups := pass(t, &memory{path: path}, sample, "7f9857c45764ef2c7cdfb619b89db3056a57a51f")
 	if len(groups[order[0]].IDs) != 3 || groups[order[0]].kept != nil {
 		t.Errorf("first channel %+v, want its listed sources untouched", groups[order[0]])
+	}
+}
+
+func TestKeptSourceIsForgottenThreeDaysAfterTheListDroppedIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remembered.json")
+	full := sample + third
+	start := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	passAt(t, &memory{path: path}, full, start)
+	dropped := dropLines(full, "7f9857c45764ef2c7cdfb619b89db3056a57a51f", "3ace1463a7cad979c3a4002b245487e9982e9f1a")
+	passAt(t, &memory{path: path}, dropped, start.Add(time.Hour))
+
+	// The source is back in the list for a pass, then dropped again: its clock starts over.
+	passAt(t, &memory{path: path}, dropLines(full, "3ace1463a7cad979c3a4002b245487e9982e9f1a"), start.Add(2*24*time.Hour))
+	passAt(t, &memory{path: path}, dropped, start.Add(2*24*time.Hour+time.Hour))
+
+	_, order, groups := passAt(t, &memory{path: path}, dropped, start.Add(4*24*time.Hour))
+	if len(order) != 2 || len(groups[order[0]].IDs) != 3 {
+		t.Errorf("order %v, first %+v: want the channel dropped four days ago gone and the source dropped two days ago kept", order, groups[order[0]])
+	}
+	_, order, groups = passAt(t, &memory{path: path}, dropped, start.Add(5*24*time.Hour+2*time.Hour))
+	if len(order) != 2 || len(groups[order[0]].IDs) != 2 {
+		t.Errorf("order %v, first %+v: want the source forgotten three days after it left again", order, groups[order[0]])
 	}
 }

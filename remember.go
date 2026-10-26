@@ -5,15 +5,21 @@ import (
 	"log"
 	"os"
 	"slices"
+	"time"
 )
 
+// Half the kept sources still played when all were tried; three days spans a weekend's events.
+const keepDroppedFor = 3 * 24 * time.Hour
+
 // The list prunes channels and sources that still play, so what it drops is kept, in its old place in
-// the playlist, until it fails to open.
+// the playlist, until it fails to open or has been out of the list for keepDroppedFor.
 type rememberedChannel struct {
 	Slug   string   `json:"slug"`
 	Name   string   `json:"name"`
 	Extinf string   `json:"extinf"`
 	IDs    []string `json:"ids"`
+	// When each kept source left the list.
+	Dropped map[string]time.Time `json:"dropped,omitempty"`
 }
 
 type memory struct {
@@ -33,8 +39,9 @@ func (m *memory) load() {
 }
 
 // keep adds what the list dropped to this pass's channels and remembers the result. failed says
-// whether a source's last open failed; a dropped source that did is forgotten.
-func (m *memory) keep(order []string, groups map[string]*channelGroup, failed func(string) bool) []string {
+// whether a source's last open failed; a dropped source that did, or that left the list too long
+// ago, is forgotten.
+func (m *memory) keep(order []string, groups map[string]*channelGroup, failed func(string) bool, now time.Time) []string {
 	m.load()
 	listed := map[string]bool{}
 	for _, slug := range order {
@@ -42,6 +49,7 @@ func (m *memory) keep(order []string, groups map[string]*channelGroup, failed fu
 	}
 	var out []string
 	next, emitted := 0, map[string]bool{}
+	droppedAt := map[string]time.Time{}
 	emitListedUpTo := func(slug string) {
 		for next < len(order) && !emitted[slug] {
 			out = append(out, order[next])
@@ -55,7 +63,15 @@ func (m *memory) keep(order []string, groups map[string]*channelGroup, failed fu
 			g = &channelGroup{Name: rc.Name, extinf: rc.Extinf}
 		}
 		for _, id := range rc.IDs {
-			if !slices.Contains(g.IDs, id) && !failed(id) {
+			if slices.Contains(g.IDs, id) {
+				continue
+			}
+			since, ok := rc.Dropped[id]
+			if !ok {
+				since = now
+			}
+			if !failed(id) && now.Sub(since) < keepDroppedFor {
+				droppedAt[id] = since
 				g.IDs = append(g.IDs, id)
 				if g.kept == nil {
 					g.kept = map[string]bool{}
@@ -77,7 +93,14 @@ func (m *memory) keep(order []string, groups map[string]*channelGroup, failed fu
 	m.channels = m.channels[:0]
 	for _, slug := range out {
 		g := groups[slug]
-		m.channels = append(m.channels, rememberedChannel{Slug: slug, Name: g.Name, Extinf: g.extinf, IDs: g.IDs})
+		rc := rememberedChannel{Slug: slug, Name: g.Name, Extinf: g.extinf, IDs: g.IDs}
+		for id := range g.kept {
+			if rc.Dropped == nil {
+				rc.Dropped = map[string]time.Time{}
+			}
+			rc.Dropped[id] = droppedAt[id]
+		}
+		m.channels = append(m.channels, rc)
 	}
 	if b, err := json.Marshal(m.channels); err == nil {
 		tmp := m.path + ".tmp"
