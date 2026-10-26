@@ -70,6 +70,10 @@ prefixes ("DE | Rally TV") and bracketed notes, so "Red Bull TV" still tells its
 (DAZN)". Two channels of one name there leave it without a guide, since a wrong programme is
 worse than none. An id the list wrote is never replaced. The log names the channels left without one.
 
+**A changed guide is refreshed twice.** Jellyfin copies the XMLTV file into its cache and rereads the
+copy, not the file, until it is an hour old, so the refresh right after a change still shows the old
+guide. A second one follows an hour and a minute later, once the copy has expired.
+
 **One refresh per burst of changes.** Jellyfin is refreshed two minutes after the last change, so a
 channel that drops out and comes back in consecutive passes costs one refresh, not two.
 
