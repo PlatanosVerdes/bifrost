@@ -187,3 +187,22 @@ func TestGuideSourcesKeepTheFirstCacheName(t *testing.T) {
 		t.Fatalf("got %+v", s)
 	}
 }
+
+func TestAChangedGuideIsRefreshedAgainOnceJellyfinsCopyExpires(t *testing.T) {
+	start := time.Now()
+	l := &lister{refreshDue: start, guideDirty: true}
+	if !l.refreshNow(start) {
+		t.Fatal("the first refresh is due")
+	}
+	l.refreshedAt(start)
+	if l.refreshNow(start.Add(30 * time.Minute)) {
+		t.Fatal("refreshed again before Jellyfin's copy expired")
+	}
+	if !l.refreshNow(start.Add(jellyfinGuideCopyAge + 2*time.Minute)) {
+		t.Fatal("no refresh once the copy expired")
+	}
+	l.refreshedAt(start.Add(jellyfinGuideCopyAge + 2*time.Minute))
+	if l.refreshNow(start.Add(5 * jellyfinGuideCopyAge)) {
+		t.Fatal("the guide did not change again, yet refreshes keep coming")
+	}
+}

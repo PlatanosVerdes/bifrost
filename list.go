@@ -23,8 +23,11 @@ var qualitySuffix = regexp.MustCompile(`\s+(?:(?:720p|1080p)\s+)?\*+$`)
 const (
 	guideMaxAge     = 24 * time.Hour
 	refreshDebounce = 2 * time.Minute // a channel that drops out and back in costs one refresh, not two
-	sleepMin        = 60              // seconds
-	sleepRange      = 241
+	// Jellyfin rereads its copy of the XMLTV file, not the file, until the copy is an hour old
+	// (XmlTvListingsProvider's _maxCacheAge), so a changed guide is only seen by a refresh after that.
+	jellyfinGuideCopyAge = time.Hour
+	sleepMin             = 60 // seconds
+	sleepRange           = 241
 )
 
 type config struct {
@@ -378,6 +381,8 @@ type lister struct {
 
 	memory     *memory     // what the list dropped, kept until it fails
 	refreshDue time.Time   // when Jellyfin is due a refresh; zero when nothing is waiting
+	guideDirty bool        // guide.xml changed since the last refresh
+	guideAgain time.Time   // when a refresh is due for Jellyfin to see that change; zero when none
 	guideIDs   []string    // the guide ids guide.xml was last cut down for
 	guideIndex *guideIndex // the guides' channels by name, reread when a guide is downloaded again
 }
@@ -470,6 +475,7 @@ func (l *lister) run() {
 				if guideChanged {
 					log.Printf("Guide: cut down to %d channels", len(ids))
 					changed = true
+					l.guideDirty = true
 				}
 			}
 		}
@@ -499,12 +505,12 @@ func (l *lister) run() {
 		l.refreshDue = time.Now().Add(refreshDebounce)
 		log.Printf("Jellyfin refresh due after %s without further changes", refreshDebounce)
 	}
-	if !l.refreshDue.IsZero() && !time.Now().Before(l.refreshDue) {
+	if l.refreshNow(time.Now()) {
 		jellyfinCode = triggerJellyfinRefresh(cfg.jellyfinURL, cfg.jellyfinAPIKey)
 		log.Printf("Jellyfin refresh: %d", jellyfinCode)
 		if jellyfinCode == 204 {
 			s.jellyfinLastRefreshTS = time.Now().Unix()
-			l.refreshDue = time.Time{}
+			l.refreshedAt(time.Now())
 		}
 	}
 
@@ -577,4 +583,21 @@ func (l *lister) keepWatched(order []string, groups map[string]*channelGroup) []
 		}
 	}
 	return order
+}
+
+// refreshNow says whether Jellyfin is due a refresh, counting the one a changed guide needs once
+// Jellyfin's copy of it has expired.
+func (l *lister) refreshNow(now time.Time) bool {
+	if !l.guideAgain.IsZero() && !now.Before(l.guideAgain) && l.refreshDue.IsZero() {
+		log.Printf("Jellyfin refresh due: its copy of the changed guide has expired")
+		l.refreshDue, l.guideAgain = now, time.Time{}
+	}
+	return !l.refreshDue.IsZero() && !now.Before(l.refreshDue)
+}
+
+func (l *lister) refreshedAt(now time.Time) {
+	l.refreshDue = time.Time{}
+	if l.guideDirty {
+		l.guideDirty, l.guideAgain = false, now.Add(jellyfinGuideCopyAge+time.Minute)
+	}
 }
