@@ -40,24 +40,33 @@ func guideSources(raw, stateDir string) []guideSource {
 
 // guideIndex says which guide channel a playlist name stands for, and which guide holds each id.
 type guideIndex struct {
-	byName []map[string][]string // per guide, in order: normalised name -> its channel ids
+	strict []map[string][]string // per guide, in order: normalised name -> its channel ids
+	loose  []map[string][]string // the same, with country prefixes and bracketed notes dropped
 	owner  map[string]int        // channel id -> the first guide that has it
 }
 
 var (
-	qualityWord = regexp.MustCompile(`\b(hd|fhd|uhd|sd|4k|\d{3,4}p)\b`)
-	bracketed   = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)`)
-	nonAlnum    = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+	qualityWord   = regexp.MustCompile(`\b(hd|fhd|uhd|sd|4k|\d{3,4}p)\b`)
+	bracketed     = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)`)
+	countryPrefix = regexp.MustCompile(`^\s*[A-Za-z]{2,3}\s*[|·:]\s*`)
+	letterDigit   = regexp.MustCompile(`(\pL)(\pN)`)
+	nonAlnum      = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 )
 
 // normName is what a playlist name and a guide name share when they mean the same channel: case,
-// quality tags, bracketed notes, punctuation and source markers go; "+" stays, as "plus".
-func normName(s string) string {
-	s = strings.ToLower(groupKey(s))
-	s = bracketed.ReplaceAllString(s, " ")
+// quality tags, punctuation and source markers go, "+" reads "plus", "TV3" reads "TV 3". Loose also
+// drops a country prefix ("DE | Rally TV") and bracketed notes, for when the strict form finds nothing.
+func normName(s string, loose bool) string {
+	s = groupKey(s)
+	if loose {
+		s = countryPrefix.ReplaceAllString(s, "")
+		s = bracketed.ReplaceAllString(s, " ")
+	}
+	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "+", " plus ")
 	s = nonAlnum.ReplaceAllString(s, " ")
 	s = qualityWord.ReplaceAllString(s, " ")
+	s = letterDigit.ReplaceAllString(s, "$1 $2")
 	return strings.Join(strings.Fields(s), " ")
 }
 
@@ -65,8 +74,8 @@ func normName(s string) string {
 func loadGuideIndex(files []string) (*guideIndex, error) {
 	idx := &guideIndex{owner: map[string]int{}}
 	for i, file := range files {
-		names := map[string][]string{}
-		idx.byName = append(idx.byName, names)
+		strict, loose := map[string][]string{}, map[string][]string{}
+		idx.strict, idx.loose = append(idx.strict, strict), append(idx.loose, loose)
 		f, err := os.Open(file)
 		if err != nil {
 			continue
@@ -101,8 +110,10 @@ func loadGuideIndex(files []string) (*guideIndex, error) {
 					idx.owner[ch.ID] = i
 				}
 				for _, n := range append(ch.Names, strings.ReplaceAll(ch.ID, ".", " ")) {
-					if k := normName(n); k != "" && !slices.Contains(names[k], ch.ID) {
-						names[k] = append(names[k], ch.ID)
+					for tier, names := range []map[string][]string{strict, loose} {
+						if k := normName(n, tier == 1); k != "" && !slices.Contains(names[k], ch.ID) {
+							names[k] = append(names[k], ch.ID)
+						}
 					}
 				}
 			}
@@ -112,22 +123,27 @@ func loadGuideIndex(files []string) (*guideIndex, error) {
 	return idx, nil
 }
 
-// match finds the guide id for a name: the first guide that knows the name decides, and only when it
-// knows it as one channel. Two channels of one name there, or none anywhere, give no guide rather
-// than a wrong one.
+// match finds the guide id for a name: the strict form first, in every guide, then the loose one. The
+// first guide that knows the name decides, and only when it knows it as one channel. Two channels of
+// one name there, or none anywhere, give no guide rather than a wrong one.
 func (idx *guideIndex) match(name string) string {
-	k := normName(name)
-	if idx == nil || k == "" {
+	if idx == nil {
 		return ""
 	}
-	for _, names := range idx.byName {
-		switch ids := names[k]; len(ids) {
-		case 0:
+	for tier, guides := range [][]map[string][]string{idx.strict, idx.loose} {
+		k := normName(name, tier == 1)
+		if k == "" {
 			continue
-		case 1:
-			return ids[0]
-		default:
-			return ""
+		}
+		for _, names := range guides {
+			switch ids := names[k]; len(ids) {
+			case 0:
+				continue
+			case 1:
+				return ids[0]
+			default:
+				return ""
+			}
 		}
 	}
 	return ""

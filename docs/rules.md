@@ -62,10 +62,12 @@ about 23 of them and 2% of the programmes. Parsing all of it was what made a ref
 and a half minutes. Cut down it is under 1 MB and a refresh takes seconds, so it can follow every
 real change. The full guide is downloaded once a day; a new channel re-trims from that copy.
 
-**A channel with no guide id gets one by name, or none.** Its name, normalised (case, quality tags,
-bracketed notes and punctuation dropped, "+" read as "plus"), is looked up in the guides' channel
+**A channel with no guide id gets one by name, or none.** Its name, normalised (case, quality tags
+and punctuation dropped, "+" read as "plus", "TV3" as "TV 3"), is looked up in the guides' channel
 names and ids, in their order: the first guide that knows the name decides, and only if it knows one
-channel by it. Two channels of one name there leave it without a guide, since a wrong programme is
+channel by it. Only when no guide knows the strict form is a looser one tried, without country
+prefixes ("DE | Rally TV") and bracketed notes, so "Red Bull TV" still tells itself from "Red Bull TV
+(DAZN)". Two channels of one name there leave it without a guide, since a wrong programme is
 worse than none. An id the list wrote is never replaced. The log names the channels left without one.
 
 **One refresh per burst of changes.** Jellyfin is refreshed two minutes after the last change, so a
