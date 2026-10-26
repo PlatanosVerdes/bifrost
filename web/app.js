@@ -118,8 +118,12 @@ class SourcePicker extends LitElement {
     const c = this.channel;
     this.pick = { id: x.id };
     try {
-      const r = await fetch(`api/channels/${c.slug}/source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: x.id }) });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Source ${x.n} did not start`);
+      const r = await fetch(`api/channels/${c.slug}/source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: x.id }) })
+        .catch(() => { throw new Error("Could not reach bifrost"); });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error(body ? body.error || `Source ${x.n} did not start` : `No answer from bifrost (HTTP ${r.status})`);
+      }
       await this.reload?.();
       this.pick = { done: x.n };
       this.renderRoot.querySelector("dialog")?.close();
