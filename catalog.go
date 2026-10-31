@@ -8,6 +8,8 @@ type catalog struct {
 	order  []string
 	groups map[string]*channelGroup
 	names  map[string]string // content id -> channel name, for log lines
+
+	blocked *blocklist // sources taken out from the page, left out of every read
 }
 
 func (c *catalog) set(order []string, groups map[string]*channelGroup) {
@@ -29,7 +31,17 @@ func (c *catalog) lookup(slug string) (string, []string) {
 	if g == nil {
 		return "", nil
 	}
-	return g.Name, append([]string(nil), g.IDs...)
+	return g.Name, c.unblocked(slug, g.IDs)
+}
+
+func (c *catalog) unblocked(slug string, ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !c.blocked.has(slug, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (c *catalog) nameOf(id string) string {

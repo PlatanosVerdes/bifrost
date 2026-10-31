@@ -22,6 +22,7 @@ type sourceFacts struct {
 	SeenAt   time.Time `json:"seen_at,omitzero"`
 	Outcome  string    `json:"outcome,omitempty"` // played, probed, failed
 	Kept     bool      `json:"kept,omitempty"`    // dropped by the list, kept until it fails
+	ThumbAt  time.Time `json:"thumb_at,omitzero"` // filled for the page, never stored
 }
 
 func (h *hub) noteSource(id string, change func(*sourceFacts)) {

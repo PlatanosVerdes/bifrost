@@ -11,7 +11,8 @@ COPY slate/offair.ts slate/loading.ts ./slate/
 # Static binary: the runtime image has no libc to link against.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost .
 
-# Only what `ffmpeg -c copy` needs to remux MPEG-TS through a pipe: a few MB instead of Alpine's ~80.
+# Only what `ffmpeg -c copy` needs to remux MPEG-TS through a pipe, plus a scaled JPEG of one keyframe
+# for the page's thumbnails: a few MB instead of Alpine's ~80.
 FROM alpine:3.21 AS ffmpeg
 ARG FFMPEG_VERSION=7.1.1
 RUN apk add --no-cache build-base curl
@@ -22,6 +23,7 @@ RUN ./configure --disable-everything --disable-autodetect --disable-network --di
         --enable-protocol=pipe --enable-demuxer=mpegts --enable-muxer=mpegts \
         --enable-parser=h264,hevc,mpegvideo,mpeg4video,vc1,aac,aac_latm,ac3,mpegaudio,dca,opus \
         --enable-decoder=h264,hevc,mpeg2video,mpeg4,vc1,aac,aac_latm,ac3,eac3,mp2,mp3,dca,opus \
+        --enable-encoder=mjpeg --enable-muxer=mjpeg --enable-filter=scale,format \
     && make -j"$(nproc)" ffmpeg && strip ffmpeg && cp ffmpeg /ffmpeg
 
 FROM alpine:3.21

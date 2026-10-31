@@ -240,6 +240,7 @@ type channelInfo struct {
 	Now      *airing       `json:"now,omitempty"`
 	Next     *airing       `json:"next,omitempty"`
 	Sources  []sourceFacts `json:"sources"` // the playlist's order, with what was last seen of each
+	Blocked  []sourceFacts `json:"blocked,omitempty"`
 }
 
 // serveChannels is the catalog for players that go to the engine directly, the source that last produced
@@ -262,11 +263,20 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 		if g == nil {
 			continue
 		}
+		ids := h.table.unblocked(slug, g.IDs)
+		var blocked []string
+		for _, id := range g.IDs {
+			if !slices.Contains(ids, id) {
+				blocked = append(blocked, id)
+			}
+		}
 		out = append(out, channelInfo{Slug: slug, Name: g.Name, Group: extractAttr(g.extinf, "group-title"),
-			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, g.IDs),
-			LastOpen: h.status.lastOpen(slug), Sources: h.sourcesOf(g.IDs)})
-		for i := range out[len(out)-1].Sources {
-			out[len(out)-1].Sources[i].Kept = g.kept[out[len(out)-1].Sources[i].ID]
+			Logo: extractAttr(g.extinf, "tvg-logo"), TvgID: extractAttr(g.extinf, "tvg-id"), IDs: h.ordered(slug, ids),
+			LastOpen: h.status.lastOpen(slug), Sources: h.sourcesOf(ids), Blocked: h.sourcesOf(blocked)})
+		for _, list := range [][]sourceFacts{out[len(out)-1].Sources, out[len(out)-1].Blocked} {
+			for i := range list {
+				list[i].Kept, list[i].ThumbAt = g.kept[list[i].ID], h.thumbs.at(list[i].ID)
+			}
 		}
 		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
