@@ -97,7 +97,6 @@ const es = {
   "What {channel} showed at {time}": "Lo que emitía {channel} a las {time}",
   "Enlarge: {alt}": "Ampliar: {alt}",
   "Nobody is watching": "Nadie está viendo nada",
-  "How this page works": "Cómo funciona esta página",
   "When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.":
     "Cuando hay un canal abierto aparece aquí: qué emite según la guía, su fuente, cuántos lo ven, cuánto tardó el motor en dar la primera imagen, sus pares y si descarga más rápido de lo que se reproduce, si Jellyfin copia el vídeo o lo transcodifica, y si va al ritmo del directo.",
   "Jellyfin re-encodes the video on the Pi": "Jellyfin transcodifica el vídeo en la Pi",
