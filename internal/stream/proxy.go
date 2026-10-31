@@ -24,9 +24,6 @@ const (
 	logEvery      = 10 * time.Second
 	firstReadSize = 64 * 1024
 	chunkSize     = 32 * 1024
-	// A viewer this far behind (32 MB, about 30 s of an 8 Mbit/s channel) is dropped: Jellyfin pauses
-	// reading for seconds while it refreshes its guide. Chunks are shared, so this bounds memory per channel.
-	viewerBacklog = 1024
 )
 
 // One upstream per channel, shared: the engine serves one connection per channel, and Jellyfin's codec
@@ -66,6 +63,7 @@ type Hub struct {
 	thumbs    *thumbs
 	surveys   map[string]*SurveyState // slug -> the check of its sources running now
 	surveyMax int                     // channels checked at once, by MACHINE_SIZE
+	backlog   int                     // chunks a viewer may fall behind, by MACHINE_SIZE
 	slate     *slate.Slate            // played once a channel's sources have all failed; needs ffmpeg
 	loading   *slate.Slate
 	ladder    bool // a starving channel may step down to its lower versions' sources
@@ -116,7 +114,7 @@ type stream struct {
 func newHub(base string, maxWait, linger time.Duration) *Hub {
 	return &Hub{base: base, maxWait: maxWait, linger: linger, table: &catalog.Catalog{},
 		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
-		schedule: &catalog.Schedule{}, swarmEvery: 5 * time.Second, surveys: map[string]*SurveyState{}, surveyMax: 1, policy: DefaultPolicy, lastProbe: map[string]time.Time{},
+		schedule: &catalog.Schedule{}, swarmEvery: 5 * time.Second, surveys: map[string]*SurveyState{}, surveyMax: 1, backlog: machineSizes["small"].ViewerBacklog / chunkSize, policy: DefaultPolicy, lastProbe: map[string]time.Time{},
 		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{},
 		facts: map[string]*SourceFacts{}}
 }
@@ -235,7 +233,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
-	viewer := make(chan []byte, viewerBacklog)
+	viewer := make(chan []byte, h.backlog)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -680,7 +678,7 @@ func (s *stream) broadcast(chunk []byte) {
 		select {
 		case v <- chunk:
 		default:
-			log.Printf("[proxy] %s dropped a viewer that fell %d chunks behind", s.label, viewerBacklog)
+			log.Printf("[proxy] %s dropped a viewer that fell %d chunks behind", s.label, cap(v))
 			delete(s.viewers, v)
 			delete(s.direct, v)
 			close(v)
@@ -862,7 +860,7 @@ type Config struct {
 	Policy      Policy
 	FFmpeg      string // empty relays sources raw
 	Ladder      bool
-	SurveyMax   int // channels whose sources are checked at once
+	Machine     Machine
 	ThumbsDir   string
 	Slate       *slate.Slate // both need ffmpeg; nil plays none
 	Loading     *slate.Slate
@@ -876,8 +874,8 @@ func NewHub(cfg Config) *Hub {
 	h.sourceWait, h.channelWait = cfg.SourceWait, cfg.ChannelWait
 	h.jellyfinURL, h.jellyfinKey = cfg.JellyfinURL, cfg.JellyfinKey
 	h.policy, h.ffmpeg, h.ladder = cfg.Policy, cfg.FFmpeg, cfg.Ladder
-	if cfg.SurveyMax > 0 {
-		h.surveyMax = cfg.SurveyMax
+	if cfg.Machine.Surveys > 0 {
+		h.surveyMax, h.backlog = cfg.Machine.Surveys, cfg.Machine.ViewerBacklog/chunkSize
 	}
 	h.thumbs = newThumbs(cfg.ThumbsDir, cfg.FFmpeg)
 	h.slate, h.loading = cfg.Slate, cfg.Loading
