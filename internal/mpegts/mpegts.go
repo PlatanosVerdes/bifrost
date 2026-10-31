@@ -46,11 +46,37 @@ func (a *Aligner) Push(b []byte) []byte {
 			return nil
 		}
 	}
-	whole := len(data) - len(data)%PacketSize
-	if whole < len(data) {
-		a.carry = append([]byte(nil), data[whole:]...)
+	return a.whole(data)
+}
+
+// whole hands out the packets in data and carries the rest. The engine resends stretches that start
+// mid-packet, so a packet counts only when the next one starts with the sync byte too, and a broken
+// one drops everything up to the next sync. The last packet waits for the next chunk to vouch for it.
+func (a *Aligner) whole(data []byte) []byte {
+	var out []byte
+	run, i := 0, 0 // data[run:i] is a run of whole packets
+	for i+PacketSize < len(data) {
+		if data[i] == SyncByte && data[i+PacketSize] == SyncByte {
+			i += PacketSize
+			continue
+		}
+		out = append(out, data[run:i]...)
+		at := SyncAt(data[i+1:])
+		if at < 0 {
+			// Not enough bytes yet to find three syncs in a row; the tail waits for the next chunk.
+			a.carry = append([]byte(nil), data[max(i+1, len(data)-tsSearch):]...)
+			return out
+		}
+		i += 1 + at
+		run = i
 	}
-	return data[:whole]
+	if i < len(data) {
+		a.carry = append([]byte(nil), data[i:]...)
+	}
+	if out == nil {
+		return data[run:i]
+	}
+	return append(out, data[run:i]...)
 }
 
 // SyncAt is the first offset where three packets in a row start with the sync byte.
@@ -181,4 +207,85 @@ func Wrap(ts int64) int64 {
 
 func WrapDiff(a, b int64) int64 {
 	return Wrap(a-b+Clock/2) - Clock/2
+}
+
+const (
+	// A step back this small is reordering, not a replay.
+	rewindSlack = 90000
+	// A step back further than this is a source restarting its clock, taken as the new start.
+	rewindMax = 60 * 90000
+)
+
+// Forward drops what a source plays again. One sent a 25 s stretch, went back and sent it again,
+// over and over with the same timestamps; the remux renumbered it and the TV showed it twice. Each
+// PID's packets are dropped from a PES that goes back until one passes the furthest already sent.
+type Forward struct {
+	pids map[uint16]*forwardPID
+}
+
+type forwardPID struct {
+	high     int64
+	dropping bool
+}
+
+// Push takes whole packets and says how far the source went back when a replay starts.
+func (f *Forward) Push(b []byte) (out []byte, back int64) {
+	if len(b)%PacketSize != 0 {
+		return b, 0
+	}
+	if f.pids == nil {
+		f.pids = map[uint16]*forwardPID{}
+	}
+	out = b[:0:0]
+	kept := 0 // b[kept:i] is a run of packets to keep, appended in one go
+	for i := 0; i < len(b); i += PacketSize {
+		p := b[i : i+PacketSize]
+		drop, went := f.packet(p)
+		back = max(back, went)
+		if drop {
+			out = append(out, b[kept:i]...)
+			kept = i + PacketSize
+		}
+	}
+	if kept == 0 {
+		return b, back
+	}
+	return append(out, b[kept:]...), back
+}
+
+func (f *Forward) packet(p []byte) (drop bool, back int64) {
+	if p[0] != SyncByte {
+		return false, 0
+	}
+	pid, _, dts, ok := PESTimes(p)
+	if !ok {
+		st := f.pids[uint16(p[1]&0x1f)<<8|uint16(p[2])]
+		return st != nil && st.dropping, 0
+	}
+	st := f.pids[pid]
+	if st == nil {
+		f.pids[pid] = &forwardPID{high: dts}
+		return false, 0
+	}
+	switch d := WrapDiff(dts, st.high); {
+	case d > 0:
+		st.high, st.dropping = dts, false
+		return false, 0
+	case -d > rewindMax:
+		st.high, st.dropping = dts, false
+		return false, 0
+	case st.dropping:
+		return true, 0
+	case -d > rewindSlack:
+		// Every PID goes back at once: only the first one to do so reports it.
+		for _, other := range f.pids {
+			if other.dropping {
+				st.dropping = true
+				return true, 0
+			}
+		}
+		st.dropping = true
+		return true, -d
+	}
+	return false, 0
 }
