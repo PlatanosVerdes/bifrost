@@ -16,14 +16,29 @@ func TestStreamInfoReadsFFmpegsListing(t *testing.T) {
 		audio  string
 	}{
 		{"  Stream #0:0[0x100]: Video: h264 (Main) ([27][0][0][0] / 0x001B), yuv420p(tv, bt709, progressive), 1280x720 [SAR 1:1 DAR 16:9], 25 fps, 25 tbr, 90k tbn", 720, ""},
-		{"  Stream #0:1[0x101](spa): Audio: aac (LC) ([15][0][0][0] / 0x000F), 48000 Hz, stereo, fltp, 128 kb/s", 0, "AAC stereo"},
+		{"  Stream #0:1[0x101](spa): Audio: aac (LC) ([15][0][0][0] / 0x000F), 48000 Hz, stereo, fltp, 128 kb/s", 0, "AAC stereo (spa)"},
 		{"  Stream #0:2[0x102]: Audio: ac3 ([129][0][0][0] / 0x0081), 48000 Hz, 5.1(side), fltp, 384 kb/s", 0, "AC3 5.1"},
+		{"  Stream #0:3[0x103](und): Audio: mp2 ([3][0][0][0] / 0x0003), 48000 Hz, stereo, fltp, 192 kb/s", 0, "MP2 stereo"},
 		{"Input #0, mpegts, from 'pipe:0':", 0, ""},
 	}
 	for _, c := range cases {
 		if h, a := streamInfo(c.line); h != c.height || a != c.audio {
 			t.Errorf("%q: got %d %q, want %d %q", c.line, h, a, c.height, c.audio)
 		}
+	}
+}
+
+func TestListingKeepsEveryAudioTrack(t *testing.T) {
+	var l listing
+	for _, line := range []string{
+		"  Stream #0:0[0x100]: Video: h264 (Main), yuv420p(progressive), 1920x1080 [SAR 1:1 DAR 16:9], 25 fps",
+		"  Stream #0:1[0x101](spa): Audio: aac (LC) ([15][0][0][0] / 0x000F), 48000 Hz, stereo, fltp, 128 kb/s",
+		"  Stream #0:2[0x102](eng): Audio: ac3 ([129][0][0][0] / 0x0081), 48000 Hz, 5.1(side), fltp, 384 kb/s",
+	} {
+		l.read(line)
+	}
+	if l.height != 1080 || l.audios() != "AAC stereo (spa), AC3 5.1 (eng)" {
+		t.Errorf("got %d %q", l.height, l.audios())
 	}
 }
 

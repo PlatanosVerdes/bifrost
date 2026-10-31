@@ -126,18 +126,44 @@ func (h *Hub) sourcesOf(ids []string) []SourceFacts {
 
 var (
 	videoInfo = regexp.MustCompile(`Stream #0:\d+.*: Video: .*?, (\d{3,5})x(\d{3,5})[ ,]`)
-	audioInfo = regexp.MustCompile(`Stream #0:\d+.*: Audio: (\w+)[^,]*, \d+ Hz, ([^,]+)`)
+	audioInfo = regexp.MustCompile(`Stream #0:\d+(?:\[\w+\])?(?:\((\w+)\))?: Audio: (\w+)[^,]*, \d+ Hz, ([^,]+)`)
 )
 
+// streamInfo reads one line of ffmpeg's listing: a video's height, or an audio track as "AAC stereo
+// (spa)", its language when the source names one.
 func streamInfo(line string) (height int, audio string) {
 	if m := videoInfo.FindStringSubmatch(line); m != nil {
 		fmt.Sscan(m[2], &height)
 	}
 	if m := audioInfo.FindStringSubmatch(line); m != nil {
-		layout, _, _ := strings.Cut(strings.TrimSpace(m[2]), "(")
-		audio = strings.ToUpper(m[1]) + " " + layout
+		layout, _, _ := strings.Cut(strings.TrimSpace(m[3]), "(")
+		audio = strings.ToUpper(m[2]) + " " + layout
+		if m[1] != "" && m[1] != "und" {
+			audio += " (" + m[1] + ")"
+		}
 	}
 	return height, audio
+}
+
+// listing collects a source's height and every audio track from ffmpeg's stream listing, since a
+// source may carry several languages and the remux passes them all on.
+type listing struct {
+	height int
+	audio  []string
+}
+
+func (l *listing) read(line string) {
+	h, a := streamInfo(line)
+	if h > 0 && l.height == 0 {
+		l.height = h
+	}
+	if a != "" {
+		l.audio = append(l.audio, a)
+	}
+}
+
+func (l *listing) audios() string {
+	return strings.Join(l.audio, ", ")
 }
 
 func (h *Hub) ServePick(w http.ResponseWriter, r *http.Request) {
