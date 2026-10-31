@@ -6,12 +6,15 @@ import "log"
 // bigger box raises them together.
 type Machine struct {
 	Surveys int // channels whose sources are checked at once
+	// Bytes a viewer may fall behind before it is dropped; chunks are shared, so it bounds memory per
+	// channel. 32 MB lasted 7 s on a 38 Mbit/s source.
+	ViewerBacklog int
 }
 
 var machineSizes = map[string]Machine{
-	"small":  {Surveys: 1}, // a Raspberry Pi
-	"medium": {Surveys: 2},
-	"large":  {Surveys: 4},
+	"small":  {Surveys: 1, ViewerBacklog: 96 << 20}, // a Raspberry Pi
+	"medium": {Surveys: 2, ViewerBacklog: 192 << 20},
+	"large":  {Surveys: 4, ViewerBacklog: 384 << 20},
 }
 
 // MachineSize reads MACHINE_SIZE; anything else counts as small.

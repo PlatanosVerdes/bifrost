@@ -107,6 +107,31 @@ func TestStarvingNeedsASustainedShortfall(t *testing.T) {
 	}
 }
 
+// The engine said "dl" with a peer while it relayed nothing, so no bitrate was ever measured and
+// nothing asked for another source.
+func TestASourceThatRelaysNothingFallsBehind(t *testing.T) {
+	w := &swarm{}
+	for s := 0.0; s <= 30; s += 5 {
+		sample := at(s, "dl", 14, 0, 1)
+		sample.relayed = 64 * 1024
+		w.add(sample)
+	}
+	if !w.status().Starving {
+		t.Error("a source that relays nothing does not count as starving")
+	}
+	if got := w.behindBy(); got != 30*time.Second {
+		t.Errorf("behind by %s, want the 30 s it relayed nothing", got)
+	}
+
+	w = &swarm{}
+	for s := 0.0; s <= 30; s += 5 {
+		w.add(at(s, "dl", 850, 820, 1))
+	}
+	if w.status().Starving || w.behindBy() != 0 {
+		t.Error("a source that keeps relaying counts as silent")
+	}
+}
+
 func TestStallsCountLeavingDownload(t *testing.T) {
 	w := &swarm{}
 	for i, status := range []string{"prebuf", "dl", "dl", "prebuf", "prebuf", "dl", "wait", "dl"} {

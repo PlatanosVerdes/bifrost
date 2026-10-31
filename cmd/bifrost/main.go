@@ -57,7 +57,7 @@ func main() {
 		Policy:      policy,
 		FFmpeg:      ffmpeg,
 		Ladder:      env.Get("RESOLUTION_SWITCH", "on") != "off",
-		SurveyMax:   stream.MachineSize(env.Get("MACHINE_SIZE", "small")).Surveys,
+		Machine:     stream.MachineSize(env.Get("MACHINE_SIZE", "small")),
 		ThumbsDir:   filepath.Join(cfg.list.StateDir, "thumbs"),
 		Slate:       offAir,
 		Loading:     loading,
