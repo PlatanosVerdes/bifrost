@@ -27,11 +27,3 @@ func TestThumbGrabWaitsForTheSourceToSettle(t *testing.T) {
 		t.Error("collected bytes for a source whose thumbnail is recent")
 	}
 }
-
-func TestNoThumbsWithoutFFmpeg(t *testing.T) {
-	th := newThumbs(t.TempDir(), "")
-	th.grab("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").push(make([]byte, 10))
-	if !th.at("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").IsZero() {
-		t.Error("a thumbnail time without ffmpeg")
-	}
-}

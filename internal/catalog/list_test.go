@@ -26,4 +26,7 @@ func TestASourceFileCanSwitchListsOffWithComments(t *testing.T) {
 	if lists, err = ReadSourceFile(path); err != nil || len(lists) != 2 || lists[0][1] != "http://a2" {
 		t.Fatalf("rolled back: got %v, %v", lists, err)
 	}
+	if _, err := ReadSourceFile(path + ".missing"); err == nil {
+		t.Error("a missing file read as lists")
+	}
 }

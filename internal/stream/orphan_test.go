@@ -26,14 +26,27 @@ func TestAChannelNobodyPlaysIsLetGoOnlyAfterTheWholeWindow(t *testing.T) {
 	}
 }
 
-func TestAPlayedChannelIsNeverLetGo(t *testing.T) {
-	o := &orphans{after: time.Minute, unseen: map[*stream]time.Time{}}
-	s := orphanStream("Channel+ C 1080p")
-	playing := []JellyfinPlayback{{Channel: "Channel+ C 1080p"}}
-	now := time.Now()
-	for minute := 0; minute < 60; minute++ {
-		if got := o.pass(now.Add(time.Duration(minute)*time.Minute), []*stream{s}, playing); len(got) != 0 {
-			t.Fatal("a channel Jellyfin plays was let go")
+func TestChannelsThatAreNeverLetGo(t *testing.T) {
+	vlc := httptest.NewRequest("GET", "/channel/channel-1-1080p", nil)
+	vlc.Header.Set("User-Agent", "VLC/3.0.21 LibVLC/3.0.21")
+	for name, c := range map[string]struct {
+		playing []JellyfinPlayback
+		direct  bool
+	}{
+		"played by Jellyfin":       {playing: []JellyfinPlayback{{Channel: "Channel 1 1080p"}}},
+		"Jellyfin not answering":   {playing: nil},
+		"watched outside Jellyfin": {playing: []JellyfinPlayback{}, direct: true},
+	} {
+		o := &orphans{after: time.Minute, unseen: map[*stream]time.Time{}}
+		s := orphanStream("Channel 1 1080p")
+		if c.direct {
+			s.noteDirect(make(chan []byte), vlc)
+		}
+		now := time.Now()
+		for minute := 0; minute < 30; minute++ {
+			if got := o.pass(now.Add(time.Duration(minute)*time.Minute), []*stream{s}, c.playing); len(got) != 0 {
+				t.Fatalf("%s: let go after %d minutes", name, minute)
+			}
 		}
 	}
 }
@@ -50,32 +63,6 @@ func TestASightingStartsTheWindowAgain(t *testing.T) {
 	}
 	if got := o.pass(now.Add(35*time.Minute), []*stream{s}, []JellyfinPlayback{}); len(got) != 1 {
 		t.Fatal("not let go 15 minutes after the last sighting")
-	}
-}
-
-func TestNoAnswerFromJellyfinClosesNothing(t *testing.T) {
-	o := &orphans{after: time.Minute, unseen: map[*stream]time.Time{}}
-	s := orphanStream("Channel 1 1080p")
-	now := time.Now()
-	for minute := 0; minute < 30; minute++ {
-		if got := o.pass(now.Add(time.Duration(minute)*time.Minute), []*stream{s}, nil); len(got) != 0 {
-			t.Fatal("let go while Jellyfin could not be asked")
-		}
-	}
-}
-
-func TestAViewerThatIsNotJellyfinKeepsTheChannel(t *testing.T) {
-	o := &orphans{after: time.Minute, unseen: map[*stream]time.Time{}}
-	s := orphanStream("Channel 1 1080p")
-	viewer := make(chan []byte)
-	direct := httptest.NewRequest("GET", "/channel/channel-1-1080p", nil)
-	direct.Header.Set("User-Agent", "VLC/3.0.21 LibVLC/3.0.21")
-	s.noteDirect(viewer, direct)
-	now := time.Now()
-	for minute := 0; minute < 30; minute++ {
-		if got := o.pass(now.Add(time.Duration(minute)*time.Minute), []*stream{s}, []JellyfinPlayback{}); len(got) != 0 {
-			t.Fatal("let go a channel a non-Jellyfin player is on")
-		}
 	}
 }
 

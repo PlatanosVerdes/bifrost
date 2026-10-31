@@ -90,9 +90,20 @@ func TestStarvingNeedsASustainedShortfall(t *testing.T) {
 	if st := w.status(); !st.Starving || st.Headroom >= 1 {
 		t.Errorf("starving: %+v", st)
 	}
+	if !w.starvingSince().Equal(at(30, "dl", 0, 0, 1).at) {
+		t.Errorf("starving since %v, want the third short sample", w.starvingSince())
+	}
 
-	if _, recovered, _ := w.add(at(35, "dl", 900, 820, 1)); !recovered || w.status().Starving {
+	if _, recovered, _ := w.add(at(35, "dl", 900, 820, 1)); !recovered || w.status().Starving || !w.starvingSince().IsZero() {
 		t.Error("a sample above the bitrate did not end the starving")
+	}
+
+	strict := &swarm{threshold: 1.5}
+	for s := 0.0; s <= 20; s += 5 {
+		strict.add(at(s, "dl", 900, 820, 1))
+	}
+	if !strict.status().Starving {
+		t.Error("1.1x counted as enough with a threshold of 1.5")
 	}
 }
 

@@ -116,29 +116,6 @@ func TestCandidateReadingSkipsTheOpeningBurst(t *testing.T) {
 	}
 }
 
-func TestStarvingSinceAndThreshold(t *testing.T) {
-	w := &swarm{}
-	// The bitrate is known from 10 s, so the samples at 10, 15 and 20 s are the three short ones.
-	for s := 0.0; s <= 20; s += 5 {
-		w.add(at(s, "dl", 600, 820, 1))
-	}
-	if !w.starvingSince().Equal(at(20, "dl", 0, 0, 1).at) {
-		t.Errorf("starving since %v, want the third short sample", w.starvingSince())
-	}
-	w.add(at(25, "dl", 900, 820, 1))
-	if !w.starvingSince().IsZero() {
-		t.Error("a sample above the bitrate did not clear the starving time")
-	}
-
-	strict := &swarm{threshold: 1.5}
-	for s := 0.0; s <= 20; s += 5 {
-		strict.add(at(s, "dl", 900, 820, 1))
-	}
-	if !strict.status().Starving {
-		t.Error("1.1x counted as enough with a threshold of 1.5")
-	}
-}
-
 func tsStream(packets int, marker byte) []byte {
 	var b bytes.Buffer
 	for i := 0; i < packets; i++ {
