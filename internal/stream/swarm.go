@@ -133,18 +133,26 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 		threshold = 1
 	}
 	rate := bitrate(w.samples)
-	if rate > 0 && float64(s.stat.SpeedDown*kib) < rate*threshold {
+	n := len(w.samples)
+	// Nothing relayed since the last sample is all owed whatever the bitrate, which a source that
+	// sends nothing never lets bifrost measure.
+	silent := n > 1 && s.relayed == w.samples[n-2].relayed
+	if silent || rate > 0 && float64(s.stat.SpeedDown*kib) < rate*threshold {
 		w.below++
 	} else {
 		w.below = 0
 	}
-	if n := len(w.samples); rate > 0 && n > 1 {
-		down := float64(s.stat.SpeedDown * kib)
-		if s.stat.Status != "dl" {
-			down = 0
-		}
+	if n > 1 && (rate > 0 || silent) {
 		dt := s.at.Sub(w.samples[n-2].at).Seconds()
-		w.behind = min(max(w.behind+(1-down/rate)*dt, 0), maxBehind.Seconds())
+		owed := 1.0
+		if !silent {
+			down := float64(s.stat.SpeedDown * kib)
+			if s.stat.Status != "dl" {
+				down = 0
+			}
+			owed = 1 - down/rate
+		}
+		w.behind = min(max(w.behind+owed*dt, 0), maxBehind.Seconds())
 	}
 	isStarving := w.below >= starvingAfter
 	switch {
