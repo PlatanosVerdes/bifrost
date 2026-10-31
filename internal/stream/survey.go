@@ -16,8 +16,10 @@ import (
 // picture and facts the picker shows. Each open costs the engine a swarm join and a few MB, so a
 // machine checks as many channels at once as MACHINE_SIZE allows, one source each.
 const (
-	surveyFor   = 10 * time.Second
-	surveyFresh = 5 * time.Minute // a source checked this recently is skipped, so a double click opens nothing twice
+	surveyFor = 10 * time.Second
+	// Sources that work gave video within about 3 s; a check gives up on the rest well before a pick would.
+	surveyOpenWait = 10 * time.Second
+	surveyFresh    = 5 * time.Minute // a source checked this recently is skipped, so a double click opens nothing twice
 )
 
 type SurveyState struct {
@@ -121,9 +123,11 @@ func (h *Hub) surveyOne(name, id string) {
 	label := name + " [survey " + short(id) + "]"
 	h.waitForSwitches()
 	start := time.Now()
-	openBy := start.Add(min(h.sourceWait, probeOpenWait))
+	openBy := start.Add(min(h.sourceWait, surveyOpenWait))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Until(openBy)+surveyFor+5*time.Second)
 	defer cancel()
+	// open() looks at its deadline only between attempts; a request the engine holds would hold the check.
+	expired := time.AfterFunc(time.Until(openBy), cancel)
 	target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-survey-%d", h.base, id, h.probes.Add(1))
 	resp, session, ok := openEngine(ctx, h.client, target, nil, label, openBy)
 	if !ok {
@@ -131,7 +135,7 @@ func (h *Hub) surveyOne(name, id string) {
 		return
 	}
 	first, ok := awaitFirstBytes(ctx, resp.Body, label, start, openBy)
-	if !ok {
+	if !expired.Stop() || !ok {
 		resp.Body.Close()
 		session.stop()
 		h.noteOutcome(id, "failed")

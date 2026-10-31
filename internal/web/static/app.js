@@ -1,5 +1,5 @@
 // bifrost's status page: the app element fetches, every component below renders what it is given.
-import { LitElement, html, svg, css, nothing } from "./vendor/lit-all.min.js";
+import { LitElement, html, svg, css, nothing, keyed } from "./vendor/lit-all.min.js";
 import { lang, t, plural } from "./i18n.js";
 
 document.documentElement.lang = lang;
@@ -85,6 +85,31 @@ const base = css`
   button.src { font: inherit; font-family: var(--font-data); font-size: 12px; color: var(--accent); background: none; border: 0; border-radius: 5px; padding: 0 4px; margin: 0 -4px; cursor: pointer; }
   button.src:hover, button.src:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
   button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* A new picture fades in; keyed() makes each one a new element, so this runs once per picture. */
+  img.fresh { animation: fadein .45s ease-out; }
+  details.more summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more summary svg { width: 14px; height: 14px; }
+  details.more summary:hover, details.more[open] summary { color: var(--ink); }
+  details.more summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  details.more p { margin: 6px 0 0; font-size: 13px; color: var(--muted); max-width: 62ch; }
+  @keyframes fadein { from { opacity: 0; } }
+  .scan::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, #fff 22%, transparent) 50%, transparent 70%) 0 0 / 250% 100%;
+    animation: scan 1.4s linear infinite; }
+  @keyframes scan { from { background-position: 125% 0; } to { background-position: -125% 0; } }
+  @media (prefers-reduced-motion: reduce) { img.fresh, .scan::after { animation: none; } }
+  .toast { position: fixed; inset: auto; margin: 0; left: max(16px, env(safe-area-inset-left, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 10;
+    max-width: min(420px, calc(100vw - 32px)); display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; font-size: 13px;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+    animation: rise .18s ease-out; }
+  @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+  .toast span { flex: 1; min-width: 0; }
+  .toast button { font: inherit; font-size: 15px; font-weight: 700; line-height: 1; border: 0; padding: 2px 4px; cursor: pointer; flex: none;
+    background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .toast button.act { font-size: 13px; font-weight: 600; background: none; color: var(--accent); }
+  .toast button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 `;
 
 const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
@@ -94,7 +119,24 @@ const progress = (done, total) => `--done: ${Math.min(100, Math.round((100 * (do
 const noPicture = svg`<svg class="none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4M4 4l16 16"/></svg>`;
 // Went back to play a stretch again in the last 15 minutes, as bifrost ranks it.
 const looping = (x) => x.loops > 0 && Date.now() - Date.parse(x.looped_at) < 15 * 60 * 1000;
+const info = svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>`;
+const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const thumbSrc = (id, at) => `api/thumbs/${id}?t=${Date.parse(at)}`;
+// A toast hides by itself, but not while the pointer or focus is on it, so its action stays reachable.
+class Toasts {
+  constructor(host) { this.host = host; this.note = null; }
+  show(note) { this.note = { ...note, ms: note.action ? 8000 : 6000 }; this.arm(); this.host.requestUpdate(); }
+  arm() { clearTimeout(this.timer); if (this.note) this.timer = setTimeout(() => this.close(), this.note.ms); }
+  hold() { clearTimeout(this.timer); }
+  close() { clearTimeout(this.timer); this.note = null; this.host.requestUpdate(); }
+  view(popover) {
+    const n = this.note;
+    if (!n) return nothing;
+    return html`<div class="toast" popover=${popover ? "manual" : nothing} role="status" @pointerenter=${() => this.hold()} @pointerleave=${() => this.arm()}
+      @focusin=${() => this.hold()} @focusout=${() => this.arm()}><span>${n.text}</span>${n.action
+        ? html`<button class="act" @click=${() => { const run = n.action.run; this.close(); run(); }}>${n.action.label}</button>` : nothing}<button aria-label=${t("Dismiss")} @click=${() => this.close()}>✕</button></div>`;
+  }
+}
 const toast = (from, text, action) => from.dispatchEvent(new CustomEvent("toast", { detail: { text, action }, bubbles: true, composed: true }));
 const playIcon = svg`<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>`;
 const spinner = svg`<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>`;
@@ -171,6 +213,27 @@ class SourcePicker extends LitElement {
     .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
+  constructor() { super(); this.toasts = new Toasts(this); }
+
+  // A modal dialog makes everything outside it inert, so while the sheet is open its toasts show inside it.
+  say(text, action) {
+    if (this.renderRoot.querySelector("dialog")?.open) this.toasts.show({ text, action });
+    else toast(this, text, action);
+  }
+
+  // Rows glide to their new place when the order changes, instead of jumping.
+  willUpdate() {
+    this.places = new Map([...this.renderRoot?.querySelectorAll?.("li.line[data-id]") ?? []].map((li) => [li.dataset.id, li.getBoundingClientRect().top]));
+  }
+
+  updated() {
+    if (!this.places?.size || calm()) return;
+    for (const li of this.renderRoot.querySelectorAll("li.line[data-id]")) {
+      const was = this.places.get(li.dataset.id), dy = was == null ? 0 : was - li.getBoundingClientRect().top;
+      if (Math.abs(dy) > 2) li.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 280, easing: "cubic-bezier(.2, .8, .2, 1)" });
+    }
+  }
+
   // The sheet renders only once opened: the channel list holds one picker per channel.
   async show() {
     this.opened = true;
@@ -210,7 +273,7 @@ class SourcePicker extends LitElement {
       }
       await this.reload?.();
       this.edit = null;
-      if (removed) toast(this, t("Source {n} removed from the channel", { n: x.n }), { label: t("Undo"), run: () => this.block(x, false) });
+      if (removed) this.say(t("Source {n} removed from the channel", { n: x.n }), { label: t("Undo"), run: () => this.block(x, false) });
     } catch (e) {
       this.edit = { id: x.id, error: e.message };
       setTimeout(() => { this.edit = null; }, 6000);
@@ -225,14 +288,14 @@ class SourcePicker extends LitElement {
       const r = await fetch(`api/channels/${c.slug}/survey`, { method: "POST" }).catch(() => { throw new Error(t("Could not reach bifrost")); });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || t("No answer from bifrost (HTTP {status})", { status: r.status }));
-      if (!body.checking) toast(this, t("Every source of this channel was checked a moment ago"));
+      if (!body.checking) this.say(t("Every source of this channel was checked a moment ago"));
       while (body.checking) {
         await new Promise((ok) => setTimeout(ok, 2000));
         await this.reload?.();
         if (!this.channel.survey) break;
       }
     } catch (e) {
-      toast(this, e.message);
+      this.say(e.message);
     }
     this.check = null;
   }
@@ -243,11 +306,12 @@ class SourcePicker extends LitElement {
     return html`<button class="link" ?disabled=${this.check?.busy} @click=${() => this.survey()}>${t("Check sources")}</button>`;
   }
 
-  thumb(x, on = false) {
+  thumb(x, on = false, scanning = false) {
     const onair = on ? html`<span class="onair"><i></i><i></i><i></i><span>${t("On air")}</span></span>` : nothing;
-    if (!known(x.thumb_at)) return html`<span class="thumb" title=${t("No picture yet: Check sources or play it")}>${noPicture}${onair}</span>`;
+    const cls = `thumb ${scanning ? "scan" : ""}`;
+    if (!known(x.thumb_at)) return html`<span class=${cls} title=${scanning ? t("Checking") : t("No picture yet: Check sources or play it")}>${noPicture}${onair}</span>`;
     const src = thumbSrc(x.id, x.thumb_at);
-    return html`<button class="thumb" aria-label=${t("Enlarge the picture of {id}", { id: x.id.slice(0, 8) })} @click=${() => { this.zoom = { ...x, src }; }}><img src=${src} alt="" loading="lazy">${onair}</button>`;
+    return html`<button class=${cls} aria-label=${t("Enlarge the picture of {id}", { id: x.id.slice(0, 8) })} @click=${() => { this.zoom = { ...x, src }; }}>${keyed(src, html`<img class="fresh" src=${src} alt="" loading="lazy">`)}${onair}</button>`;
   }
 
   // Numbered in the playlist's order, so a source keeps its number whichever plays.
@@ -284,13 +348,13 @@ class SourcePicker extends LitElement {
 
   sheet(c, live) {
     const pick = this.pick, pending = pick?.id && !pick.error;
-    return html`<dialog aria-label=${t("Sources of {name}", { name: c.name })} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }} @close=${() => { this.zoom = null; }}>
+    return html`<dialog aria-label=${t("Sources of {name}", { name: c.name })} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }} @close=${() => { this.zoom = null; this.toasts.close(); }}>
       <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label=${t("Close")} @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><div class="head"><p>${live ? t("Pick a source for this channel. Everyone watching it switches too.") : t("Not playing now: a source can be picked while it plays.")}</p>${this.surveyNote()}</div>
         <ul class="panel">${this.ranked().map((x, i) => {
           const on = x.id === c.playing?.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
-          return html`<li class="line ${on ? "on" : ""} ${x.outcome === "failed" ? "dead" : ""}">
-            ${this.thumb(x, on)}
-            <span class="name"><b>${t("Source {n}", { n: x.n })}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">${t("Best")}</span>` : nothing}${c.survey?.current === x.id ? html`<span class="tag on">${t("Checking")}</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
+          return html`<li class="line ${on ? "on" : ""} ${x.outcome === "failed" ? "dead" : ""}" data-id=${x.id}>
+            ${this.thumb(x, on, c.survey?.current === x.id)}
+            <span class="name"><b>${t("Source {n}", { n: x.n })}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">${t("Best")}</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
             <span class="acts">${!on && live ? html`<button class="play" title=${t("Play source {n}", { n: x.n })} aria-label=${mine && pending ? t("Switching…") : t("Play source {n}", { n: x.n })} ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? spinner : playIcon}</button>` : nothing}</span>
             <span class="info">${this.facts(x)}</span>
             ${on ? nothing : html`<button class="remove" title=${t("Remove from this channel")} aria-label=${t("Remove source {n} from this channel", { n: x.n })} ?disabled=${pending || edit || c.ids.length < 2} @click=${() => this.block(x, true)}>${trash}</button>`}</li>`;
@@ -303,7 +367,7 @@ class SourcePicker extends LitElement {
               <span class="acts"><button class="ctl" ?disabled=${edit} @click=${() => this.block(x, false)}>${t("Restore")}</button></span>
               <span class="info">${this.facts(x)}</span></li>`;
           })}</ul></details>` : nothing}
-        ${this.zoom ? html`<div class="zoom" @click=${() => { this.zoom = null; }}><img src=${this.zoom.src} alt=${t("Picture of {id}", { id: this.zoom.id.slice(0, 8) })}><p class="muted"><span class="id" title=${this.zoom.id}>${this.zoom.id}</span> ${hhmm(this.zoom.thumb_at)}</p></div>` : nothing}</div>
+        ${this.zoom ? html`<div class="zoom" @click=${() => { this.zoom = null; }}><img src=${this.zoom.src} alt=${t("Picture of {id}", { id: this.zoom.id.slice(0, 8) })}><p class="muted"><span class="id" title=${this.zoom.id}>${this.zoom.id}</span> ${hhmm(this.zoom.thumb_at)}</p></div>` : nothing}${this.toasts.view(false)}</div>
     </dialog>`;
   }
 }
@@ -464,7 +528,7 @@ class ActivityView extends LitElement {
   shot(st) {
     if (!known(st.thumb_at)) return html`<div class="shot empty">${noPicture}<span>${t("No picture yet, it shows some 20 s after the source starts")}</span></div>`;
     const src = thumbSrc(st.source, st.thumb_at), alt = t("What {channel} showed at {time}", { channel: st.channel, time: hhmm(st.thumb_at) });
-    return html`<button class="shot" aria-label=${t("Enlarge: {alt}", { alt })} @click=${() => this.enlarge({ src, alt })}><img src=${src} alt=""><span class="at">${hhmm(st.thumb_at)}</span></button>`;
+    return html`<button class="shot" aria-label=${t("Enlarge: {alt}", { alt })} @click=${() => this.enlarge({ src, alt })}>${keyed(src, html`<img class="fresh" src=${src} alt="">`)}<span class="at">${hhmm(st.thumb_at)}</span></button>`;
   }
 
   async enlarge(zoom) {
@@ -481,7 +545,7 @@ class ActivityView extends LitElement {
     const streams = this.status.streams || [], jellyfin = this.status.jellyfin_playing || [];
     if (!streams.length) {
       return html`<div class="row">${this.screen(false)}<div><b>${t("Nobody is watching")}</b>
-        <p>${t("When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.")}</p></div></div>`;
+        <details class="more"><summary>${info}<span>${t("What shows here")}</span></summary><p>${t("When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.")}</p></details></div></div>`;
     }
     return html`<div class="scroller">${streams.map((st) => this.stream(st, jellyfin))}</div>`;
   }
@@ -729,7 +793,7 @@ class ShareDialog extends LitElement {
 customElements.define("share-dialog", ShareDialog);
 
 class BifrostApp extends LitElement {
-  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true }, note: { state: true } };
+  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true } };
   static styles = [base, css`
     .wrap { max-width: 1080px; margin: 0 auto; padding-block: 22px 48px;
       padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -748,6 +812,10 @@ class BifrostApp extends LitElement {
     .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
     .summary b { color: var(--ink); font-family: var(--font-data); font-weight: 500; }
     .note { color: var(--muted); font-size: 12px; margin-top: 28px; max-width: 72ch; }
+    /* Healthy is a calm pulse with its word in the tooltip; anything else says what is wrong. */
+    .dot.pulse { animation: pulse 2.4s ease-out infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
+    @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
     .me { background: none; border: 0; padding: 0; border-radius: 50%; cursor: pointer; display: flex; }
     .me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); }
@@ -758,17 +826,6 @@ class BifrostApp extends LitElement {
     .menu .item { display: block; width: 100%; box-sizing: border-box; text-align: center; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink);
       text-decoration: none; border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; background: var(--chip); cursor: pointer; }
     .menu .item + .item { margin-top: 8px; }
-    .toast { position: fixed; inset: auto; margin: 0; left: max(16px, env(safe-area-inset-left, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 10;
-      max-width: min(420px, calc(100vw - 32px)); display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; font-size: 13px;
-      background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
-      animation: rise .18s ease-out; }
-    @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
-    @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
-    .toast span { flex: 1; min-width: 0; }
-    .toast button { font: inherit; font-size: 15px; font-weight: 700; line-height: 1; border: 0; padding: 2px 4px; cursor: pointer; flex: none;
-      background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .toast button.act { font-size: 13px; font-weight: 600; background: none; color: var(--accent); }
-    .toast button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
     .menu .item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
 
@@ -776,14 +833,13 @@ class BifrostApp extends LitElement {
     super();
     this.status = null; this.channels = []; this.reachable = true; this.access = null;
     this.view = location.hash === "#activity" ? "activity" : "channels";
+    this.toasts = new Toasts(this);
     this.addEventListener("toast", (e) => this.notify(e.detail));
   }
 
   // A popover, so it shows above the source picker's modal dialog too.
   async notify(note) {
-    clearTimeout(this.noteTimer);
-    this.note = note;
-    this.noteTimer = setTimeout(() => { this.note = null; }, 6000);
+    this.toasts.show(note);
     await this.updateComplete;
     const el = this.renderRoot.querySelector(".toast");
     if (el?.matches(":popover-open")) el.hidePopover();
@@ -834,6 +890,7 @@ class BifrostApp extends LitElement {
   render() {
     const s = this.status, l = s?.list || {};
     const healthy = this.reachable && (l.channels ?? 0) > 0;
+    const health = !this.reachable ? t("Not answering") : healthy ? t("Healthy") : s ? t("No list yet") : t("Loading");
     const watching = (s?.streams || []).reduce((a, st) => a + st.viewers, 0);
     const tab = (id, label) => html`<a href="#${id}" aria-current=${this.view === id ? "page" : nothing}>${label}</a>`;
     return html`<div class="wrap">
@@ -841,7 +898,7 @@ class BifrostApp extends LitElement {
         <div class="brand"><p class="word">bifrost</p><span class="muted">${s?.name ?? ""} · ${location.host}</span></div>
         <div class="right">
           <span class="chip">${s?.version ?? "…"}</span>
-          <span class="pill"><span class="dot ${healthy ? "ok" : "bad"}"></span>${!this.reachable ? t("Not answering") : healthy ? t("Healthy") : s ? t("No list yet") : t("Loading")}</span>
+          <span class="pill" title=${health} role="status" aria-label=${health}><span class="dot ${healthy ? "ok pulse" : s || !this.reachable ? "bad" : "none"}"></span>${healthy ? nothing : health}</span>
           ${this.access?.enabled ? html`<button class="me" popovertarget="me-menu" aria-label=${this.access.me ? t("Account: {email}", { email: this.access.me }) : t("Not signed in")}>${avatar(this.access.me)}</button>
             <div class="menu" id="me-menu" popover @toggle=${(e) => this.placeMenu(e)}>
               ${this.access.me
@@ -864,8 +921,8 @@ class BifrostApp extends LitElement {
         ? html`<activity-view .status=${s} .channels=${this.channels} .reload=${() => this.refresh()}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
-      ${this.note ? html`<div class="toast" popover="manual" role="status"><span>${this.note.text}</span>${this.note.action ? html`<button class="act" @click=${() => { const run = this.note.action.run; this.note = null; run(); }}>${this.note.action.label}</button>` : nothing}<button aria-label=${t("Dismiss")} @click=${() => { this.note = null; }}>✕</button></div>` : nothing}
-      <p class="note">${t("Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.")}</p>
+      ${this.toasts.view(true)}
+      <details class="note more"><summary>${info}<span>${t("How this page works")}</span></summary><p>${t("Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.")}</p></details>
     </div>`;
   }
 }
