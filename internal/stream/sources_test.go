@@ -144,6 +144,34 @@ func TestPickOfADeadSourceKeepsTheStream(t *testing.T) {
 	}
 }
 
+func TestALoopingSourceGoesAfterTheRestAndOwesItsLoop(t *testing.T) {
+	h := newHub("http://engine", time.Second, time.Second)
+	s := &stream{h: h, label: "ch", source: "c", swarm: &swarm{}}
+	h.mu.Lock()
+	h.lastGood["ch"] = "c"
+	h.mu.Unlock()
+	s.looped("c", 25*time.Second)
+	s.looped("c", 20*time.Second)
+	if got := strings.Join(h.ordered("ch", []string{"a", "b", "c"}), ""); got != "abc" {
+		t.Errorf("order %q, want the looping one after the rest though it played last", got)
+	}
+	if f := h.sourcesOf([]string{"c"})[0]; f.Loops != 2 || f.LoopedAt.IsZero() {
+		t.Errorf("facts %+v, want two loops", f)
+	}
+	if got := s.swarm.behindBy(); got != 45*time.Second {
+		t.Errorf("behind by %s, want both loops owed", got)
+	}
+	s.looped("b", 25*time.Second)
+	if got := s.swarm.behindBy(); got != 45*time.Second {
+		t.Error("a source that is not playing added to what the stream owes")
+	}
+	h.noteSource("c", func(f *SourceFacts) { f.LoopedAt = time.Now().Add(-recentlyFailed - time.Minute) })
+	s.looped("c", time.Second)
+	if f := h.sourcesOf([]string{"c"})[0]; f.Loops != 1 {
+		t.Errorf("%d loops, want the count started over after a quiet spell", f.Loops)
+	}
+}
+
 func TestOrderTriesARecentlyFailedSourceLast(t *testing.T) {
 	h := newHub("http://engine", time.Second, time.Second)
 	ids := []string{"a", "b", "c"}

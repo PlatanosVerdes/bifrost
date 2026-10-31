@@ -432,7 +432,7 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 				continue
 			}
 			src = r
-			next = &cutover{mux: mux, align: newSourceIn(s.label, true), timer: time.NewTimer(remuxStartWait)}
+			next = &cutover{mux: mux, align: s.sourceIn(r.up.id, true), timer: time.NewTimer(remuxStartWait)}
 		case <-retry:
 			retry = nil
 			search()
@@ -480,7 +480,7 @@ func (c *cutover) feedFrom(src *found) <-chan []byte {
 
 // relay serves viewers from up until a probe hands over a better source, then closes the old session.
 func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
-	s.relayFrom(ctx, up, start, newSourceIn(s.label, false), newRebaser(), s.remux(ctx, up))
+	s.relayFrom(ctx, up, start, s.sourceIn(up.id, false), newRebaser(), s.remux(ctx, up))
 }
 
 func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, align *sourceIn, reb *tsRebaser, mux *remux) {
@@ -548,7 +548,7 @@ func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, a
 		case h := <-s.handover:
 			if mux == nil {
 				s.switchTo(up, h)
-				up, align = h.up, newSourceIn(s.label, true)
+				up, align = h.up, s.sourceIn(h.up.id, true)
 				grab = s.h.thumbs.grab(up.id)
 				continue
 			}
@@ -623,21 +623,43 @@ func (r *remux) output() <-chan []byte {
 
 // sourceIn turns one source's bytes into whole TS packets, without any stretch it plays again.
 type sourceIn struct {
-	label string
+	s     *stream
+	id    string
 	align mpegts.Aligner
 	fwd   mpegts.Forward
 }
 
-func newSourceIn(label string, dropLead bool) *sourceIn {
-	return &sourceIn{label: label, align: mpegts.Aligner{DropLead: dropLead}}
+func (s *stream) sourceIn(id string, dropLead bool) *sourceIn {
+	return &sourceIn{s: s, id: id, align: mpegts.Aligner{DropLead: dropLead}}
 }
 
 func (in *sourceIn) push(b []byte) []byte {
 	out, back := in.fwd.Push(in.align.Push(b))
 	if back > 0 {
-		log.Printf("[proxy] %s went back %.1fs to play it again, dropped until it is past what was sent", in.label, float64(back)/90000)
+		went := time.Duration(back) * time.Second / 90000
+		log.Printf("[proxy] %s %s went back %s to play it again, dropped until it is past what was sent", in.s.label, short(in.id), went.Round(100*time.Millisecond))
+		in.s.looped(in.id, went)
 	}
 	return out
+}
+
+// looped notes a source going back to play a stretch again. The playing one owes that stretch, so the
+// search for a better source starts at its next sample instead of after its viewers have waited.
+func (s *stream) looped(id string, back time.Duration) {
+	now := time.Now()
+	s.h.noteSource(id, func(f *SourceFacts) {
+		if now.Sub(f.LoopedAt) > recentlyFailed {
+			f.Loops = 0
+		}
+		f.Loops++
+		f.LoopedAt = now
+	})
+	s.mu.Lock()
+	w, playing := s.swarm, s.source == id
+	s.mu.Unlock()
+	if playing {
+		w.owe(back)
+	}
 }
 
 // The playing source keeps playing until the handed-over one's remux delivers.
@@ -650,7 +672,7 @@ type cutover struct {
 }
 
 func (s *stream) startCutover(h handover) *cutover {
-	c := &cutover{h: h, align: newSourceIn(s.label, true), timer: time.NewTimer(remuxStartWait)}
+	c := &cutover{h: h, align: s.sourceIn(h.up.id, true), timer: time.NewTimer(remuxStartWait)}
 	if c.mux = s.remux(h.up.ctx, h.up); c.mux == nil {
 		c.abandon("ffmpeg did not start")
 		return nil

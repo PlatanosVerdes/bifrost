@@ -92,6 +92,8 @@ const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiti
 const progress = (done, total) => `--done: ${Math.min(100, Math.round((100 * (done + 0.5)) / total))}%`;
 // A source with no picture yet: a struck-out screen, in the page's muted ink.
 const noPicture = svg`<svg class="none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4M4 4l16 16"/></svg>`;
+// Went back to play a stretch again in the last 15 minutes, as bifrost ranks it.
+const looping = (x) => x.loops > 0 && Date.now() - Date.parse(x.looped_at) < 15 * 60 * 1000;
 const thumbSrc = (id, at) => `api/thumbs/${id}?t=${Date.parse(at)}`;
 const toast = (from, text) => from.dispatchEvent(new CustomEvent("toast", { detail: text, bubbles: true, composed: true }));
 
@@ -224,14 +226,15 @@ class SourcePicker extends LitElement {
   ranked() {
     const c = this.channel;
     return (c.sources?.length ? c.sources : c.ids.map((id) => ({ id }))).map((x, i) => ({ ...x, n: i + 1 }))
-      .sort((a, b) => (a.outcome === "failed") - (b.outcome === "failed") || (b.headroom ?? -1) - (a.headroom ?? -1));
+      .sort((a, b) => (a.outcome === "failed") - (b.outcome === "failed") || looping(a) - looping(b) || (b.headroom ?? -1) - (a.headroom ?? -1));
   }
 
   facts(x) {
     const kept = x.kept ? html`<span class="muted">${t("Not in the list")}</span>` : "";
     if (!x.seen_at && x.headroom == null) return [kept, html`<span class="muted">${t("Not tried yet")}</span>`].filter(Boolean);
     const tone = x.headroom == null ? "" : swarmTone({ headroom: x.headroom }) || "quick";
-    const bits = [kept, x.outcome === "failed" ? html`<span class="bad">${t("Failed")}</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
+    const loops = looping(x) ? html`<span class="warn" title=${t("It went back to play a stretch again; bifrost drops the repeat and tries this source after the rest")}>${plural(x.loops, "{n} loop", "{n} loops")}</span>` : "";
+    const bits = [kept, x.outcome === "failed" ? html`<span class="bad">${t("Failed")}</span>` : "", loops, x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
       x.height ? `${x.height}p` : "", x.audio, x.peers != null ? plural(x.peers, "{n} peer", "{n} peers") : "", hhmm(x.seen_at)].filter(Boolean);
     return bits.map((b) => html`<span>${b}</span>`);
   }

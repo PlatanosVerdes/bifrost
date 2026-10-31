@@ -164,6 +164,12 @@ func (w *swarm) add(s swarmSample) (starving, recovered, stalled bool) {
 	return isStarving && !wasStarving, wasStarving && !isStarving, stalled
 }
 
+func (w *swarm) owe(d time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.behind = min(w.behind+d.Seconds(), maxBehind.Seconds())
+}
+
 func (w *swarm) behindBy() time.Duration {
 	w.mu.Lock()
 	defer w.mu.Unlock()
