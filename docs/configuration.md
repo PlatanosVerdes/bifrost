@@ -21,7 +21,7 @@
 | `SWITCH_MIN_HEADROOM`, `SWITCH_MARGIN` | `1.1`, `0.2` | What a probed source needs to be switched to (see [Moving to a better source](streams.md#moving-to-a-better-source)) |
 | `FFMPEG` | `ffmpeg` | The ffmpeg that remuxes every source so a switch keeps one clock (the image ships a minimal one); `off` relays sources raw |
 | `SLATE` | `on` | The loading and off-air slates played while a channel has no video; `off` plays none: the viewer waits for video or gets a 503. Needs ffmpeg |
-| `MACHINE_SIZE` | `small` | `small` (a Raspberry Pi), `medium` or `large`: every limit that depends on the hardware follows it. For now how many channels "Check the others" checks at once: 1, 2 or 4, one source each |
+| `MACHINE_SIZE` | `small` | `small` (a Raspberry Pi), `medium` or `large`: every limit that depends on the hardware follows it. How many channels "Check sources" checks at once (1, 2 or 4, one source each), and how far a viewer may fall behind before it is dropped (96, 192 or 384 MB per channel) |
 | `RESOLUTION_SWITCH` | `on` | A starving channel may step down to its lower version (same guide id, name differing only in `720p`/`1080p`) and back up; `off` keeps every channel on its own sources |
 | `STARVING_BELOW` | `1` | A sample is short when the download is under this times the bitrate. Only raised to test switching |
 | `ACCESS_TEAM_DOMAIN` | empty (sharing off) | The Cloudflare Access team in front of bifrost, `<team>.cloudflareaccess.com`. See [Sharing](sharing.md) |
