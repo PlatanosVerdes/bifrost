@@ -95,7 +95,10 @@ const noPicture = svg`<svg class="none" viewBox="0 0 24 24" fill="none" stroke="
 // Went back to play a stretch again in the last 15 minutes, as bifrost ranks it.
 const looping = (x) => x.loops > 0 && Date.now() - Date.parse(x.looped_at) < 15 * 60 * 1000;
 const thumbSrc = (id, at) => `api/thumbs/${id}?t=${Date.parse(at)}`;
-const toast = (from, text) => from.dispatchEvent(new CustomEvent("toast", { detail: text, bubbles: true, composed: true }));
+const toast = (from, text, action) => from.dispatchEvent(new CustomEvent("toast", { detail: { text, action }, bubbles: true, composed: true }));
+const playIcon = svg`<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>`;
+const spinner = svg`<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>`;
+const trash = svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 
 class SourcePicker extends LitElement {
   static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true }, zoom: { state: true }, edit: { state: true }, check: { state: true }, opened: { state: true } };
@@ -115,18 +118,41 @@ class SourcePicker extends LitElement {
     .panel { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
     .panel li { border-top: 1px solid var(--line); }
     .panel li:first-child { border-top: 0; }
-    .panel li.line { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 3px 12px; align-items: center; padding: 9px 12px; font-size: 13px; }
-    .line .thumb { grid-row: 1 / 3; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--chip); border: 0; padding: 0; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
+    .panel li.line { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; padding: 10px 12px; font-size: 13px; }
+    /* The source playing: tinted, with a bar on its edge and on air marked on its picture. */
+    .line.on { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+    .line.dead .thumb, .line.dead .name { opacity: .55; }
+    .line .thumb { position: relative; grid-row: 1 / 3; width: 104px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--chip); border: 0; padding: 0; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
     .line button.thumb { cursor: zoom-in; }
     .line .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .line span.thumb { background: var(--stripes); color: var(--muted); }
     .line .thumb svg.none { width: 22px; height: 22px; opacity: .8; }
-    .line .info { grid-column: 2 / 4; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .line .info { grid-column: 2 / 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
     .info > * + * { margin-left: 10px; }
     .id { font-family: var(--font-data); font-size: 11px; color: var(--muted); margin-left: 8px; user-select: all; }
-    .acts { display: flex; gap: 6px; }
-    .ctl.minus { color: var(--calm-bad); background: color-mix(in srgb, var(--calm-bad) 10%, transparent); }
-    .ctl.minus:hover { background: color-mix(in srgb, var(--calm-bad) 18%, transparent); }
+    .acts { display: flex; gap: 6px; justify-self: center; }
+    .onair { position: absolute; left: 5px; bottom: 5px; display: inline-flex; align-items: flex-end; gap: 2px; padding: 3px 6px 3px 5px; border-radius: 4px;
+      background: rgba(0, 0, 0, .7); color: #fff; font-size: 10px; font-weight: 600; line-height: 1; }
+    .onair i { width: 2px; height: 8px; border-radius: 1px; background: var(--ok); animation: eq .9s ease-in-out infinite; }
+    .onair i:nth-child(2) { animation-delay: -.3s; } .onair i:nth-child(3) { animation-delay: -.6s; }
+    .onair span { margin-left: 4px; }
+    @keyframes eq { 0%, 100% { height: 3px; } 50% { height: 9px; } }
+    @media (prefers-reduced-motion: reduce) { .onair i { animation: none; } }
+    .play { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+      color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); transition: background .15s, color .15s; }
+    .play svg { width: 14px; height: 14px; }
+    .play:hover:not(:disabled), .play:focus-visible { color: var(--surface); background: var(--accent); }
+    .play:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .play:disabled { cursor: default; opacity: .5; }
+    .play .spin { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Same box as the play button, both centred in the last column, so the two icons line up. */
+    .line .remove { grid-column: 3; justify-self: center; display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
+      border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: .7; }
+    .line .remove svg { width: 16px; height: 16px; }
+    .line .remove:hover, .line .remove:focus-visible { opacity: 1; color: var(--calm-bad); background: color-mix(in srgb, var(--calm-bad) 10%, transparent); }
+    .line .remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .line .remove:disabled { visibility: hidden; }
     .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 12px; }
     .head p { margin: 0; }
     .gap { margin-left: 10px; }
@@ -141,7 +167,7 @@ class SourcePicker extends LitElement {
     .zoom img { width: 100%; border-radius: 8px; display: block; }
     .zoom p { margin: 0; }
     .x { position: absolute; top: 12px; right: 12px; font: inherit; font-size: 14px; line-height: 1; color: var(--muted); background: var(--chip); border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
-    .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; color: var(--muted); background: var(--chip); }
+    .tag { font-size: 11px; font-weight: 600; border-radius: 5px; padding: 1px 7px; margin-left: 6px; color: var(--muted); background: var(--chip); }
     .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
@@ -184,6 +210,7 @@ class SourcePicker extends LitElement {
       }
       await this.reload?.();
       this.edit = null;
+      if (removed) toast(this, t("Source {n} removed from the channel", { n: x.n }), { label: t("Undo"), run: () => this.block(x, false) });
     } catch (e) {
       this.edit = { id: x.id, error: e.message };
       setTimeout(() => { this.edit = null; }, 6000);
@@ -216,10 +243,11 @@ class SourcePicker extends LitElement {
     return html`<button class="link" ?disabled=${this.check?.busy} @click=${() => this.survey()}>${t("Check sources")}</button>`;
   }
 
-  thumb(x) {
-    if (!known(x.thumb_at)) return html`<span class="thumb" title=${t("No picture yet: Check sources or play it")}>${noPicture}</span>`;
+  thumb(x, on = false) {
+    const onair = on ? html`<span class="onair"><i></i><i></i><i></i><span>${t("On air")}</span></span>` : nothing;
+    if (!known(x.thumb_at)) return html`<span class="thumb" title=${t("No picture yet: Check sources or play it")}>${noPicture}${onair}</span>`;
     const src = thumbSrc(x.id, x.thumb_at);
-    return html`<button class="thumb" aria-label=${t("Enlarge the picture of {id}", { id: x.id.slice(0, 8) })} @click=${() => { this.zoom = { ...x, src }; }}><img src=${src} alt="" loading="lazy"></button>`;
+    return html`<button class="thumb" aria-label=${t("Enlarge the picture of {id}", { id: x.id.slice(0, 8) })} @click=${() => { this.zoom = { ...x, src }; }}><img src=${src} alt="" loading="lazy">${onair}</button>`;
   }
 
   // Numbered in the playlist's order, so a source keeps its number whichever plays.
@@ -241,7 +269,7 @@ class SourcePicker extends LitElement {
 
   quick() {
     const pick = this.pick, next = this.ranked().find((x) => x.id !== this.channel.playing.source && x.outcome !== "failed");
-    if (pick?.id && !pick.error) return html`<span class="muted">${t("switching…")}</span>`;
+    if (pick?.id && !pick.error) return html`<span class="muted">${t("Switching…")}</span>`;
     if (pick?.error) return html`<span class="bad">${pick.error}</span>`;
     if (pick?.done) return html`<span class="muted">${t("Switched to Source {n}", { n: pick.done })}</span>`;
     return next ? html`<button class="link" @click=${() => this.choose(next)}>${t("Switch to best")}</button>` : nothing;
@@ -257,16 +285,15 @@ class SourcePicker extends LitElement {
   sheet(c, live) {
     const pick = this.pick, pending = pick?.id && !pick.error;
     return html`<dialog aria-label=${t("Sources of {name}", { name: c.name })} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }} @close=${() => { this.zoom = null; }}>
-      <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label=${t("Close")} @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><div class="head"><p>${live ? t("Pick a source for this channel. Everyone watching it switches too.") : t("Not playing now: Play shows up here while it plays.")}</p>${this.surveyNote()}</div>
+      <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label=${t("Close")} @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><div class="head"><p>${live ? t("Pick a source for this channel. Everyone watching it switches too.") : t("Not playing now: a source can be picked while it plays.")}</p>${this.surveyNote()}</div>
         <ul class="panel">${this.ranked().map((x, i) => {
           const on = x.id === c.playing?.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
-          return html`<li class="line">
-            ${this.thumb(x)}
-            <span><b>${t("Source {n}", { n: x.n })}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">${t("best")}</span>` : nothing}${c.survey?.current === x.id ? html`<span class="tag on">${t("checking")}</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
-            <span class="acts">${on ? html`<span class="tag on">${t("Playing")}</span>`
-              : html`${live ? html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? t("switching…") : t("Play")}</button>` : nothing}
-                <button class="ctl minus" title=${t("Remove from this channel")} aria-label=${t("Remove source {n} from this channel", { n: x.n })} ?disabled=${pending || edit || c.ids.length < 2} @click=${() => this.block(x, true)}>−</button>`}</span>
-            <span class="info">${this.facts(x)}</span></li>`;
+          return html`<li class="line ${on ? "on" : ""} ${x.outcome === "failed" ? "dead" : ""}">
+            ${this.thumb(x, on)}
+            <span class="name"><b>${t("Source {n}", { n: x.n })}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">${t("Best")}</span>` : nothing}${c.survey?.current === x.id ? html`<span class="tag on">${t("Checking")}</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
+            <span class="acts">${!on && live ? html`<button class="play" title=${t("Play source {n}", { n: x.n })} aria-label=${mine && pending ? t("Switching…") : t("Play source {n}", { n: x.n })} ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? spinner : playIcon}</button>` : nothing}</span>
+            <span class="info">${this.facts(x)}</span>
+            ${on ? nothing : html`<button class="remove" title=${t("Remove from this channel")} aria-label=${t("Remove source {n} from this channel", { n: x.n })} ?disabled=${pending || edit || c.ids.length < 2} @click=${() => this.block(x, true)}>${trash}</button>`}</li>`;
         })}</ul>
         ${c.blocked?.length ? html`<details class="removed"><summary>${plural(c.blocked.length, "{n} removed source", "{n} removed sources")}</summary>
           <ul class="panel">${c.blocked.map((x) => {
@@ -413,7 +440,7 @@ class ActivityView extends LitElement {
     .source { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
     .source:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .res { font-family: var(--font-data); font-size: 12px; white-space: nowrap; }
-    .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; display: inline-block; white-space: nowrap; overflow-wrap: normal; }
+    .tag { font-size: 11px; font-weight: 600; border-radius: 5px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; display: inline-block; white-space: nowrap; overflow-wrap: normal; }
     .tag.copy { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
     .tag.trans { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
     .tag.slow { background: color-mix(in srgb, var(--calm-bad) 16%, transparent); color: var(--calm-bad); }
@@ -465,8 +492,8 @@ class ActivityView extends LitElement {
     const transcoding = jf && jf.video !== "copy";
     return html`<div class="stream">${this.shot(st)}<div class="body"><div class="title">
       <b>${st.channel}</b>${jf ? (transcoding
-        ? html`<span class="tag trans" title=${t("Jellyfin re-encodes the video on the Pi")}>${t("re-encoding")}</span>`
-        : html`<span class="tag copy" title=${t("Jellyfin passes the video through untouched")}>${t("direct")}</span>`) : nothing}${transcoding && jf.speed && jf.speed < 0.95 ? html`<span class="tag slow" title=${t("Jellyfin's re-encode against live: below 1x the picture stalls")}>${t("falling behind")} · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title=${t("Measuring another source of the channel next to this one, to move to it if it is clearly better")}>${t("trying {id}…", { id: st.probing_source.slice(0, 8) })}</span>` : nothing}
+        ? html`<span class="tag trans" title=${t("Jellyfin re-encodes the video on the Pi")}>${t("Re-encoding")}</span>`
+        : html`<span class="tag copy" title=${t("Jellyfin passes the video through untouched")}>${t("Direct")}</span>`) : nothing}${transcoding && jf.speed && jf.speed < 0.95 ? html`<span class="tag slow" title=${t("Jellyfin's re-encode against live: below 1x the picture stalls")}>${t("Falling behind")} · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title=${t("Measuring another source of the channel next to this one, to move to it if it is clearly better")}>${t("Trying {id}…", { id: st.probing_source.slice(0, 8) })}</span>` : nothing}
       ${st.now ? html`<p class="air">${st.now.title} <span>${t(st.next ? "until {time}, then {next}" : "until {time}", { time: hhmm(st.now.stop), next: st.next?.title })}</span></p>` : nothing}
     </div>
     <div class="facts">
@@ -492,7 +519,7 @@ class ActivityView extends LitElement {
 
   // The headroom bar is the loud thing on the card: the tick is what the stream needs (1x), the bar fills to 1.5x.
   swarmFact(sw) {
-    if (!sw?.sampled_at) return html`<div class="fact"><span class="lbl">${t("Swarm")}</span><span class="muted">${t("measuring…")}</span></div>`;
+    if (!sw?.sampled_at) return html`<div class="fact"><span class="lbl">${t("Swarm")}</span><span class="muted">${t("Measuring…")}</span></div>`;
     const down = kb(sw.download_bytes_per_second), rate = kb(sw.bitrate_bytes_per_second), tone = swarmTone(sw);
     const fill = rate ? Math.min(sw.headroom / 1.5, 1) * 100 : 0;
     return html`<div class="fact"><span class="lbl">${t("Swarm")}</span>${plural(sw.peers, "{n} peer", "{n} peers")}
@@ -507,7 +534,7 @@ class ActivityView extends LitElement {
     if (!id) return "";
     const copy = async (e) => {
       await navigator.clipboard.writeText(`${location.origin}/ace/getstream?id=${id}`);
-      e.target.textContent = t("link copied");
+      e.target.textContent = t("Link copied");
       setTimeout(() => { e.target.textContent = `${id.slice(0, 8)}…`; }, 1500);
     };
     return html`<button class="source mono" title=${t("{id} · click to copy a link VLC can play", { id })} @click=${copy}>${id.slice(0, 8)}…</button>`;
@@ -519,7 +546,7 @@ class ActivityView extends LitElement {
     return recent.map((r) => {
       // Grey is normal; colour only says something: under a second, slow, or nothing played.
       const tone = r.outcome === "gave_up" ? "bad" : r.outcome !== "playing" ? "" : r.seconds < 1 ? "quick" : r.seconds > 5 ? "tight" : "";
-      const res = r.outcome === "playing" ? secs(r.seconds) : r.outcome === "gave_up" ? t("no video") : t("left early");
+      const res = r.outcome === "playing" ? secs(r.seconds) : r.outcome === "gave_up" ? t("No video") : t("Left early");
       const title = t(r.outcome === "playing" ? "first video after {s}" : "gave up after {s}", { s: secs(r.seconds) });
       return html`<li><span class="at">${hhmm(r.at)}</span><span class="ch">${r.channel}</span><span class="res ${tone || "muted"}" title=${title}>${res}</span>
         ${r.device ? html`<span class="dev">${r.device}</span>` : nothing}</li>`;
@@ -740,6 +767,7 @@ class BifrostApp extends LitElement {
     .toast span { flex: 1; min-width: 0; }
     .toast button { font: inherit; font-size: 15px; font-weight: 700; line-height: 1; border: 0; padding: 2px 4px; cursor: pointer; flex: none;
       background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .toast button.act { font-size: 13px; font-weight: 600; background: none; color: var(--accent); }
     .toast button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
     .menu .item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
@@ -752,9 +780,9 @@ class BifrostApp extends LitElement {
   }
 
   // A popover, so it shows above the source picker's modal dialog too.
-  async notify(text) {
+  async notify(note) {
     clearTimeout(this.noteTimer);
-    this.note = text;
+    this.note = note;
     this.noteTimer = setTimeout(() => { this.note = null; }, 6000);
     await this.updateComplete;
     const el = this.renderRoot.querySelector(".toast");
@@ -836,7 +864,7 @@ class BifrostApp extends LitElement {
         ? html`<activity-view .status=${s} .channels=${this.channels} .reload=${() => this.refresh()}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
-      ${this.note ? html`<div class="toast" popover="manual" role="status"><span>${this.note}</span><button aria-label=${t("Dismiss")} @click=${() => { this.note = null; }}>✕</button></div>` : nothing}
+      ${this.note ? html`<div class="toast" popover="manual" role="status"><span>${this.note.text}</span>${this.note.action ? html`<button class="act" @click=${() => { const run = this.note.action.run; this.note = null; run(); }}>${this.note.action.label}</button>` : nothing}<button aria-label=${t("Dismiss")} @click=${() => { this.note = null; }}>✕</button></div>` : nothing}
       <p class="note">${t("Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.")}</p>
     </div>`;
   }
