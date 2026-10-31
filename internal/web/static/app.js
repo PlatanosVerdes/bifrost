@@ -87,12 +87,6 @@ const base = css`
   button.src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* A new picture fades in; keyed() makes each one a new element, so this runs once per picture. */
   img.fresh { animation: fadein .45s ease-out; }
-  details.more summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--muted); font-size: 12px; margin-top: 4px; }
-  details.more summary::-webkit-details-marker { display: none; }
-  details.more summary svg { width: 14px; height: 14px; }
-  details.more summary:hover, details.more[open] summary { color: var(--ink); }
-  details.more summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-  details.more p { margin: 6px 0 0; font-size: 13px; color: var(--muted); max-width: 62ch; }
   @keyframes fadein { from { opacity: 0; } }
   .scan::after { content: ""; position: absolute; inset: 0; pointer-events: none;
     background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, #fff 22%, transparent) 50%, transparent 70%) 0 0 / 250% 100%;
@@ -119,7 +113,6 @@ const progress = (done, total) => `--done: ${Math.min(100, Math.round((100 * (do
 const noPicture = svg`<svg class="none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4M4 4l16 16"/></svg>`;
 // Went back to play a stretch again in the last 15 minutes, as bifrost ranks it.
 const looping = (x) => x.loops > 0 && Date.now() - Date.parse(x.looped_at) < 15 * 60 * 1000;
-const info = svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>`;
 const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const thumbSrc = (id, at) => `api/thumbs/${id}?t=${Date.parse(at)}`;
 // A toast hides by itself, but not while the pointer or focus is on it, so its action stays reachable.
@@ -922,7 +915,7 @@ class BifrostApp extends LitElement {
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
       ${this.toasts.view(true)}
-      <details class="note more"><summary>${info}<span>${t("How this page works")}</span></summary><p>${t("Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.")}</p></details>
+      <p class="note">${t("Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.")}</p>
     </div>`;
   }
 }
