@@ -93,3 +93,33 @@ func TestOnlyJellyfinRequestsCountAsJellyfin(t *testing.T) {
 		}
 	}
 }
+
+func TestAChannelLeftOpenByAZapIsLetGoAfterAMinute(t *testing.T) {
+	o := &orphans{after: 15 * time.Minute, unseen: map[*stream]time.Time{}}
+	start := time.Date(2026, 10, 31, 8, 21, 0, 0, time.UTC)
+	old, now := orphanStream("Dazn MotoGP 720p"), orphanStream("Dazn MotoGP 1080p")
+	old.opened, now.opened = start, start.Add(2*time.Minute)
+	playing := []jellyfinPlayback{{Channel: "Dazn MotoGP 1080p"}}
+	streams := []*stream{old, now}
+
+	if got := o.pass(start.Add(3*time.Minute), streams, playing); len(got) != 0 {
+		t.Fatal("let go at once")
+	}
+	got := o.pass(start.Add(4*time.Minute), streams, playing)
+	if len(got) != 1 || got[0] != old {
+		t.Fatalf("let go %v a minute after the zap, want only the old channel", got)
+	}
+}
+
+func TestAChannelOpenedBeforeTheOneItLostIsNotAZap(t *testing.T) {
+	o := &orphans{after: 15 * time.Minute, unseen: map[*stream]time.Time{}}
+	start := time.Date(2026, 10, 31, 8, 21, 0, 0, time.UTC)
+	lost, other := orphanStream("Channel A 1080p"), orphanStream("Channel B 1080p")
+	lost.opened, other.opened = start.Add(time.Minute), start
+	playing := []jellyfinPlayback{{Channel: "Channel B 1080p"}}
+	for minute := 0; minute < 15; minute++ {
+		if got := o.pass(start.Add(time.Duration(minute)*time.Minute), []*stream{lost, other}, playing); len(got) != 0 {
+			t.Fatalf("let go after %d minutes a channel nothing newer replaced", minute)
+		}
+	}
+}

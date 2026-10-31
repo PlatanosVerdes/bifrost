@@ -51,6 +51,7 @@ type streamStatus struct {
 	Slug          string       `json:"slug,omitempty"`
 	Source        string       `json:"source,omitempty"`
 	Viewers       int          `json:"viewers"`
+	External      int          `json:"external"`
 	Since         time.Time    `json:"since"`
 	StartedAfterS float64      `json:"started_after_s"`
 	Now           *airing      `json:"now,omitempty"`
@@ -195,7 +196,7 @@ func (h *hub) streamsNow() []streamStatus {
 		s.mu.Lock()
 		if !s.done && s.ok {
 			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source, Waiting: s.source == "",
-				Viewers: len(s.viewers), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
+				Viewers: len(s.viewers), External: len(s.direct), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
 				Probing: s.probing != "", ProbingSource: s.probing, Switches: s.switches, LastSwitch: s.lastSwitch,
 				LastProbe: s.lastProbe, channelSwitches: switches[s.slug], remuxRestarts: restarts[s.slug]})
 			out[len(out)-1].Now, out[len(out)-1].Next = h.onAir(s.slug)
@@ -241,6 +242,7 @@ type channelInfo struct {
 	Next     *airing       `json:"next,omitempty"`
 	Sources  []sourceFacts `json:"sources"` // the playlist's order, with what was last seen of each
 	Blocked  []sourceFacts `json:"blocked,omitempty"`
+	Survey   *surveyState  `json:"survey,omitempty"`
 }
 
 // serveChannels is the catalog for players that go to the engine directly, the source that last produced
@@ -278,6 +280,7 @@ func (h *hub) serveChannels(w http.ResponseWriter, r *http.Request) {
 				list[i].Kept, list[i].ThumbAt = g.kept[list[i].ID], h.thumbs.at(list[i].ID)
 			}
 		}
+		out[len(out)-1].Survey = h.surveying(slug)
 		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.at(extractAttr(g.extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
 			out[len(out)-1].Playing = &st

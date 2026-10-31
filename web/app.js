@@ -86,9 +86,12 @@ const base = css`
 `;
 
 const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
+// A rainbow filled up to done of total, the half of the source being opened counted.
+const progress = (done, total) => `--done: ${Math.min(100, Math.round((100 * (done + 0.5)) / total))}%`;
+const toast = (from, text) => from.dispatchEvent(new CustomEvent("toast", { detail: text, bubbles: true, composed: true }));
 
 class SourcePicker extends LitElement {
-  static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true }, zoom: { state: true }, edit: { state: true } };
+  static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true }, zoom: { state: true }, edit: { state: true }, check: { state: true }, opened: { state: true } };
   static styles = [base, css`
     :host { display: inline; }
     .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -115,6 +118,14 @@ class SourcePicker extends LitElement {
     .acts { display: flex; gap: 6px; }
     .ctl.minus { color: var(--calm-bad); background: color-mix(in srgb, var(--calm-bad) 10%, transparent); }
     .ctl.minus:hover { background: color-mix(in srgb, var(--calm-bad) 18%, transparent); }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 12px; }
+    .head p { margin: 0; }
+    .gap { margin-left: 10px; }
+    .checking { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .bar { width: 72px; height: 4px; border-radius: 4px; background: var(--chip); position: relative; }
+    .bar::before { content: ""; position: absolute; inset: 0; border-radius: 4px; background: var(--spectrum);
+      clip-path: inset(0 calc(100% - var(--done)) 0 0); transition: clip-path .6s ease-out; }
+    @media (prefers-reduced-motion: reduce) { .bar::before { transition: none; } }
     .removed { margin-top: 12px; font-size: 12px; color: var(--muted); }
     .removed summary { cursor: pointer; margin-bottom: 8px; }
     .zoom { position: absolute; inset: 0; background: var(--surface); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 8px; cursor: zoom-out; }
@@ -125,7 +136,12 @@ class SourcePicker extends LitElement {
     .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
-  show() { this.renderRoot.querySelector("dialog").showModal(); }
+  // The sheet renders only once opened: the channel list holds one picker per channel.
+  async show() {
+    this.opened = true;
+    await this.updateComplete;
+    this.renderRoot.querySelector("dialog").showModal();
+  }
 
   async choose(x) {
     const c = this.channel;
@@ -165,6 +181,32 @@ class SourcePicker extends LitElement {
     }
   }
 
+  // Polls faster than the page while bifrost opens the other sources one by one.
+  async survey() {
+    const c = this.channel;
+    this.check = { busy: true };
+    try {
+      const r = await fetch(`api/channels/${c.slug}/survey`, { method: "POST" }).catch(() => { throw new Error("Could not reach bifrost"); });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `No answer from bifrost (HTTP ${r.status})`);
+      if (!body.checking) toast(this, "Every source of this channel was checked a moment ago");
+      while (body.checking) {
+        await new Promise((ok) => setTimeout(ok, 2000));
+        await this.reload?.();
+        if (!this.channel.survey) break;
+      }
+    } catch (e) {
+      toast(this, e.message);
+    }
+    this.check = null;
+  }
+
+  surveyNote() {
+    const sv = this.channel.survey;
+    if (sv) return html`<span class="checking" role="status"><span class="bar" style=${progress(sv.done, sv.total)}></span>${sv.done + 1} of ${sv.total}</span>`;
+    return html`<button class="link" ?disabled=${this.check?.busy} @click=${() => this.survey()}>Check the others</button>`;
+  }
+
   thumb(x) {
     if (!known(x.thumb_at)) return html`<span class="thumb">no preview</span>`;
     const src = `api/thumbs/${x.id}?t=${Date.parse(x.thumb_at)}`;
@@ -196,20 +238,23 @@ class SourcePicker extends LitElement {
   }
 
   render() {
-    const c = this.channel;
-    if (!switchable(c)) return nothing;
+    const c = this.channel, live = switchable(c);
+    const quick = live ? this.quick() : nothing;
+    return html`${this.count ? html`<button class="src" aria-haspopup="dialog" @click=${() => this.show()}>${plural(c.ids.length, "source")}</button>` : nothing}${quick === nothing ? nothing : html`<span class="gap">${quick}</span>`}
+    ${this.opened ? this.sheet(c, live) : nothing}`;
+  }
+
+  sheet(c, live) {
     const pick = this.pick, pending = pick?.id && !pick.error;
-    const quick = this.quick();
-    return html`${this.count ? html`<button class="src" aria-haspopup="dialog" @click=${() => this.show()}>${plural(c.ids.length, "source")}</button>` : nothing}${quick === nothing ? nothing : " · "}${quick}
-    <dialog aria-label="Sources of ${c.name}" @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
-      <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><p>Pick a source for this channel. Everyone watching it switches too.</p>
+    return html`<dialog aria-label="Sources of ${c.name}" @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
+      <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><div class="head"><p>${live ? "Pick a source for this channel. Everyone watching it switches too." : "Not playing now: Play shows up here while it plays."}</p>${this.surveyNote()}</div>
         <ul class="panel">${this.ranked().map((x, i) => {
-          const on = x.id === c.playing.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
+          const on = x.id === c.playing?.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
           return html`<li class="line">
             ${this.thumb(x)}
-            <span><b>Source ${x.n}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
+            <span><b>Source ${x.n}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">best</span>` : nothing}${c.survey?.current === x.id ? html`<span class="tag on">checking</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
             <span class="acts">${on ? html`<span class="tag on">Playing</span>`
-              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>
+              : html`${live ? html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>` : nothing}
                 <button class="ctl minus" title="Remove from this channel" aria-label="Remove source ${x.n} from this channel" ?disabled=${pending || edit || c.ids.length < 2} @click=${() => this.block(x, true)}>−</button>`}</span>
             <span class="info">${this.facts(x)}</span></li>`;
         })}</ul>
@@ -245,10 +290,7 @@ class ChannelGroup extends LitElement {
   static properties = { name: {}, channels: { attribute: false }, jellyfin: { attribute: false }, reload: { attribute: false } };
 
   count(c) {
-    const n = plural(c.ids.length, "source");
-    return switchable(c)
-      ? html`<button class="src" aria-haspopup="dialog" @click=${(e) => e.target.closest("li").querySelector("source-picker").show()}>${n}</button>`
-      : html`<span class="src">${n}</span>`;
+    return html`<button class="src" aria-haspopup="dialog" @click=${(e) => e.target.closest("li").querySelector("source-picker").show()}>${plural(c.ids.length, "source")}</button>`;
   }
 
   render() {
@@ -261,7 +303,7 @@ class ChannelGroup extends LitElement {
           <span class="name">${c.name}</span>
           ${this.count(c)}
           ${c.now ? html`<span class="air" title="${c.now.title}, until ${hhmm(c.now.stop)}">${c.now.title} · until ${hhmm(c.now.stop)}</span>` : nothing}
-          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}${switchable(c) ? html`<source-picker .channel=${c} .reload=${this.reload}></source-picker>` : nothing}</span>
+          <span class="state ${st.tone === "none" ? "" : st.tone}">${st.text}<source-picker .channel=${c} .reload=${this.reload}></source-picker></span>
         </li>`;
       })}</ul>
     </section>`;
@@ -401,11 +443,14 @@ class ActivityView extends LitElement {
     </div>`;
   }
 
+  // A Jellyfin connection no session plays is one Jellyfin left open (a zap, a TV switched off), not a viewer.
   watching(st, watchers) {
-    if (!watchers.length) return html`<div class="fact"><span class="lbl">Watching</span>${plural(st.viewers, "viewer")}<span class="sub">not through Jellyfin</span></div>`;
+    const external = st.external ?? 0, leftOpen = Math.max(0, st.viewers - external - watchers.length);
+    const notes = [external > 0 ? html`<li class="muted">${plural(external, "viewer")} not through Jellyfin</li>` : "",
+      leftOpen > 0 ? html`<li class="muted">Left open by Jellyfin, closes by itself</li>` : ""].filter(Boolean);
+    if (!watchers.length && !external) return html`<div class="fact"><span class="lbl">Watching</span>Nobody${leftOpen ? html`<span class="sub">Left open by Jellyfin, closes by itself</span>` : nothing}</div>`;
     // One line per device: the same user on two screens is two lines, not one name.
-    const others = st.viewers - watchers.length;
-    return html`<div class="fact"><span class="lbl">Watching</span><ul class="devices">${watchers.map((w) => html`<li>${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(" · ")}</span></li>`)}${others > 0 ? html`<li class="muted">+${others} not through Jellyfin</li>` : nothing}</ul></div>`;
+    return html`<div class="fact"><span class="lbl">Watching</span><ul class="devices">${watchers.map((w) => html`<li>${w.user || w.device}<span class="sub">${[w.device, w.client].filter(Boolean).join(" · ")}</span></li>`)}${notes}</ul></div>`;
   }
 
   // The headroom bar is the loud thing on the card: the tick is what the stream needs (1x), the bar fills to 1.5x.
@@ -619,7 +664,7 @@ class ShareDialog extends LitElement {
 customElements.define("share-dialog", ShareDialog);
 
 class BifrostApp extends LitElement {
-  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true } };
+  static properties = { status: { state: true }, channels: { state: true }, view: { state: true }, reachable: { state: true }, access: { state: true }, note: { state: true } };
   static styles = [base, css`
     .wrap { max-width: 1080px; margin: 0 auto; padding-block: 22px 48px;
       padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -648,6 +693,16 @@ class BifrostApp extends LitElement {
     .menu .item { display: block; width: 100%; box-sizing: border-box; text-align: center; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink);
       text-decoration: none; border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; background: var(--chip); cursor: pointer; }
     .menu .item + .item { margin-top: 8px; }
+    .toast { position: fixed; inset: auto; margin: 0; left: max(16px, env(safe-area-inset-left, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 10;
+      max-width: min(420px, calc(100vw - 32px)); display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; font-size: 13px;
+      background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+      animation: rise .18s ease-out; }
+    @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+    .toast span { flex: 1; min-width: 0; }
+    .toast button { font: inherit; font-size: 15px; font-weight: 700; line-height: 1; border: 0; padding: 2px 4px; cursor: pointer; flex: none;
+      background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .toast button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
     .menu .item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   `];
 
@@ -655,6 +710,18 @@ class BifrostApp extends LitElement {
     super();
     this.status = null; this.channels = []; this.reachable = true; this.access = null;
     this.view = location.hash === "#activity" ? "activity" : "channels";
+    this.addEventListener("toast", (e) => this.notify(e.detail));
+  }
+
+  // A popover, so it shows above the source picker's modal dialog too.
+  async notify(text) {
+    clearTimeout(this.noteTimer);
+    this.note = text;
+    this.noteTimer = setTimeout(() => { this.note = null; }, 6000);
+    await this.updateComplete;
+    const el = this.renderRoot.querySelector(".toast");
+    if (el?.matches(":popover-open")) el.hidePopover();
+    el?.showPopover();
   }
 
   connectedCallback() {
@@ -731,6 +798,7 @@ class BifrostApp extends LitElement {
         ? html`<activity-view .status=${s} .channels=${this.channels} .reload=${() => this.refresh()}></activity-view>`
         : html`<channel-board .channels=${this.channels} .jellyfin=${s?.jellyfin_playing || []} .reload=${() => this.refresh()}></channel-board>`}
       <share-dialog .access=${this.access} heading="bifrost ${s?.name ?? ""}"></share-dialog>
+      ${this.note ? html`<div class="toast" popover="manual" role="status"><span>${this.note}</span><button aria-label="Dismiss" @click=${() => { this.note = null; }}>✕</button></div>` : nothing}
       <p class="note">Nothing on this page opens a channel: states come from real opens since bifrost last started, and from what Jellyfin reports about its own sessions. A channel with several sources skips a dead one by itself. Refreshes every 3 s while in view.</p>
     </div>`;
   }

@@ -59,11 +59,13 @@ type hub struct {
 	factsDirty    bool
 	probes        atomic.Int64
 
-	ffmpeg  string // remuxes every source when set; empty relays sources raw
-	thumbs  *thumbs
-	slate   *slate // played once a channel's sources have all failed; needs ffmpeg
-	loading *slate
-	ladder  bool // a starving channel may step down to its lower versions' sources
+	ffmpeg    string // remuxes every source when set; empty relays sources raw
+	thumbs    *thumbs
+	surveys   map[string]*surveyState // slug -> the check of its sources running now
+	surveyMax int                     // channels checked at once, by MACHINE_SIZE
+	slate     *slate                  // played once a channel's sources have all failed; needs ffmpeg
+	loading   *slate
+	ladder    bool // a starving channel may step down to its lower versions' sources
 }
 
 type plan struct {
@@ -93,6 +95,7 @@ type stream struct {
 	slug          string
 	source        string
 	playingSince  time.Time
+	opened        time.Time
 	startedAfterS float64
 
 	ctx        context.Context
@@ -110,7 +113,7 @@ type stream struct {
 func newHub(base string, maxWait, linger time.Duration) *hub {
 	return &hub{base: base, maxWait: maxWait, linger: linger, table: &catalog{},
 		client: &http.Client{Transport: engineTransport()}, streams: map[string]*stream{}, lastGood: map[string]string{}, status: &statusBoard{},
-		schedule: &schedule{}, swarmEvery: 5 * time.Second, policy: defaultPolicy, lastProbe: map[string]time.Time{},
+		schedule: &schedule{}, swarmEvery: 5 * time.Second, surveys: map[string]*surveyState{}, surveyMax: 1, policy: defaultPolicy, lastProbe: map[string]time.Time{},
 		probedAt: map[string]map[string]time.Time{}, switches: map[string]int{}, remuxRestarts: map[string]int{},
 		facts: map[string]*sourceFacts{}}
 }
@@ -256,7 +259,7 @@ func (h *hub) join(p plan, r *http.Request) (*stream, chan []byte, bool) {
 	}
 	s := &stream{h: h, id: p.key, label: p.label, slug: p.slug, ready: make(chan struct{}),
 		viewers: map[chan []byte]struct{}{viewer: {}}, cancel: cancel, ctx: ctx, headers: headers,
-		handover: make(chan handover), swarm: &swarm{threshold: h.policy.starvingBelow}}
+		handover: make(chan handover), swarm: &swarm{threshold: h.policy.starvingBelow}, opened: time.Now()}
 	s.noteDirect(viewer, r)
 	h.streams[p.key] = s
 	go s.run(ctx, p, headers)

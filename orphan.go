@@ -8,7 +8,9 @@ import (
 )
 
 // Jellyfin can keep pulling a channel after losing its session (a stop that hits an older one): let it
-// go after orphanAfter with no Jellyfin session playing it, and keep it on any doubt.
+// go after orphanAfter with no Jellyfin session playing it, and keep it on any doubt. A zap is no doubt:
+// Jellyfin keeps the old channel open for minutes while a channel opened after it is the one it plays.
+const zapAfter = time.Minute
 
 func fromJellyfin(r *http.Request) bool {
 	return strings.Contains(r.UserAgent(), "Jellyfin")
@@ -30,6 +32,16 @@ type orphans struct {
 	unseen map[*stream]time.Time
 }
 
+// zappedFrom says whether a channel opened after s is the one Jellyfin plays now.
+func zappedFrom(s *stream, streams []*stream, playing []jellyfinPlayback) bool {
+	for _, t := range streams {
+		if t != s && t.opened.After(s.opened) && watched(t.label, playing) {
+			return true
+		}
+	}
+	return false
+}
+
 // pass returns the streams to let go, given what Jellyfin plays right now. playing is nil when
 // Jellyfin could not be asked, which closes nothing and forgets nothing.
 func (o *orphans) pass(now time.Time, streams []*stream, playing []jellyfinPlayback) []*stream {
@@ -49,7 +61,7 @@ func (o *orphans) pass(now time.Time, streams []*stream, playing []jellyfinPlayb
 			o.unseen[s] = now
 			continue
 		}
-		if now.Sub(first) >= o.after {
+		if now.Sub(first) >= o.after || now.Sub(first) >= zapAfter && zappedFrom(s, streams, playing) {
 			release = append(release, s)
 			delete(o.unseen, s)
 		}
@@ -98,7 +110,7 @@ func (h *hub) closeOrphans(every, after time.Duration) {
 			playing = nil
 		}
 		for _, s := range o.pass(time.Now(), streams, playing) {
-			log.Printf("[proxy] %s closed: no Jellyfin session has played it for %s", s.label, after)
+			log.Printf("[proxy] %s closed: no Jellyfin session plays it, left open by a zap or for %s", s.label, after)
 			s.cancel()
 		}
 	}
