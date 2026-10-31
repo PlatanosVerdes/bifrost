@@ -52,6 +52,7 @@ type streamStatus struct {
 	Source        string       `json:"source,omitempty"`
 	Viewers       int          `json:"viewers"`
 	External      int          `json:"external"`
+	ThumbAt       time.Time    `json:"thumb_at,omitzero"`
 	Since         time.Time    `json:"since"`
 	StartedAfterS float64      `json:"started_after_s"`
 	Now           *airing      `json:"now,omitempty"`
@@ -196,7 +197,7 @@ func (h *hub) streamsNow() []streamStatus {
 		s.mu.Lock()
 		if !s.done && s.ok {
 			out = append(out, streamStatus{Channel: s.label, Slug: s.slug, Source: s.source, Waiting: s.source == "",
-				Viewers: len(s.viewers), External: len(s.direct), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
+				Viewers: len(s.viewers), External: len(s.direct), ThumbAt: h.thumbs.at(s.source), Since: s.playingSince, StartedAfterS: s.startedAfterS, Swarm: s.swarm.status(),
 				Probing: s.probing != "", ProbingSource: s.probing, Switches: s.switches, LastSwitch: s.lastSwitch,
 				LastProbe: s.lastProbe, channelSwitches: switches[s.slug], remuxRestarts: restarts[s.slug]})
 			out[len(out)-1].Now, out[len(out)-1].Next = h.onAir(s.slug)

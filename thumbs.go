@@ -18,7 +18,7 @@ import (
 // never show the slate. One ffmpeg at a time decoding only a keyframe keeps the Pi out of it.
 const (
 	thumbAfter = 20 * time.Second // past what the engine had buffered when the source opened
-	thumbEvery = 10 * time.Minute
+	thumbEvery = 2 * time.Minute  // the playing source's picture on the page; a cut costs a fraction of a second
 	thumbRetry = time.Minute
 	thumbBytes = 3 << 20 // a keyframe well inside, even at 1080p
 	thumbWait  = 20 * time.Second
