@@ -253,7 +253,7 @@ class SourcePicker extends LitElement {
 
   sheet(c, live) {
     const pick = this.pick, pending = pick?.id && !pick.error;
-    return html`<dialog aria-label=${t("Sources of {name}", { name: c.name })} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
+    return html`<dialog aria-label=${t("Sources of {name}", { name: c.name })} @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }} @close=${() => { this.zoom = null; }}>
       <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label=${t("Close")} @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><div class="head"><p>${live ? t("Pick a source for this channel. Everyone watching it switches too.") : t("Not playing now: Play shows up here while it plays.")}</p>${this.surveyNote()}</div>
         <ul class="panel">${this.ranked().map((x, i) => {
           const on = x.id === c.playing?.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
