@@ -18,16 +18,23 @@ import (
 //go:embed static
 var webFS embed.FS
 
-var webFiles = func() http.Handler {
+var static = func() fs.FS {
 	sub, err := fs.Sub(webFS, "static")
 	if err != nil {
 		panic(err)
 	}
-	return http.FileServer(http.FS(sub))
+	return sub
 }()
 
+var webFiles = http.FileServer(http.FS(static))
+
+// isPage is any file the page is made of; every other path is the proxy's.
 func isPage(path string) bool {
-	return path == "/" || path == "/app.js" || path == "/favicon.svg" || path == "/apple-touch-icon.png" || strings.HasPrefix(path, "/vendor/")
+	if path == "/" {
+		return true
+	}
+	info, err := fs.Stat(static, strings.TrimPrefix(path, "/"))
+	return err == nil && !info.IsDir()
 }
 
 func servePage(w http.ResponseWriter, r *http.Request) {

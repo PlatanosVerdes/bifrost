@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PlatanosVerdes/bifrost/internal/httpx"
+	"github.com/PlatanosVerdes/bifrost/internal/i18n"
 )
 
 // A survey opens a channel's other sources one after another, each for a few seconds, for the
@@ -38,22 +39,22 @@ func (h *Hub) surveying(slug string) *SurveyState {
 
 func (h *Hub) ServeSurvey(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		httpx.WriteError(w, http.StatusForbidden, "That request came from another site")
+		httpx.WriteError(w, http.StatusForbidden, i18n.T(r, "That request came from another site"))
 		return
 	}
 	if h.thumbs == nil {
-		httpx.WriteError(w, http.StatusServiceUnavailable, "Checking sources needs ffmpeg")
+		httpx.WriteError(w, http.StatusServiceUnavailable, i18n.T(r, "Checking sources needs ffmpeg"))
 		return
 	}
 	slug := r.PathValue("slug")
 	_, ids := h.table.Lookup(slug)
 	if len(ids) == 0 {
-		httpx.WriteError(w, http.StatusNotFound, "No such channel")
+		httpx.WriteError(w, http.StatusNotFound, i18n.T(r, "No such channel"))
 		return
 	}
 
 	h.mu.Lock()
-	if busy := h.surveyBusy(slug); busy != "" {
+	if busy := h.surveyBusy(r, slug); busy != "" {
 		h.mu.Unlock()
 		httpx.WriteError(w, http.StatusConflict, busy)
 		return
@@ -81,9 +82,9 @@ func (h *Hub) ServeSurvey(w http.ResponseWriter, r *http.Request) {
 }
 
 // surveyBusy says why slug cannot be checked now, empty when it can; h.mu is held.
-func (h *Hub) surveyBusy(slug string) string {
+func (h *Hub) surveyBusy(r *http.Request, slug string) string {
 	if h.surveys[slug] != nil {
-		return "This channel's sources are being checked already"
+		return i18n.T(r, "This channel's sources are being checked already")
 	}
 	if len(h.surveys) < h.surveyMax {
 		return ""
@@ -91,10 +92,10 @@ func (h *Hub) surveyBusy(slug string) string {
 	if h.surveyMax == 1 {
 		for other := range h.surveys {
 			name, _ := h.table.Lookup(other)
-			return "This machine checks one channel at a time: " + name + " is being checked"
+			return i18n.T(r, "This machine checks one channel at a time: %s is being checked", name)
 		}
 	}
-	return fmt.Sprintf("This machine checks %d channels at a time, try again when one ends", h.surveyMax)
+	return i18n.T(r, "This machine checks %d channels at a time, try again when one ends", h.surveyMax)
 }
 
 func (h *Hub) runSurvey(slug string, todo []string) {

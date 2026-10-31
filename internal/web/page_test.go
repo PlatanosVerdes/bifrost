@@ -50,7 +50,7 @@ func TestPageIsServed(t *testing.T) {
 			t.Errorf("GET %s: %d, missing %q", path, rec.Code, want)
 		}
 	}
-	if isPage("/channel/channel-a-1080p") || isPage("/ace/getstream") || !isPage("/") || !isPage("/favicon.svg") {
+	if isPage("/channel/channel-a-1080p") || isPage("/ace/getstream") || !isPage("/") || !isPage("/favicon.svg") || !isPage("/i18n.js") || isPage("/vendor") {
 		t.Error("isPage routes streams to the page or the page to the proxy")
 	}
 }
