@@ -24,7 +24,7 @@ var webFiles = func() http.Handler {
 }()
 
 func isPage(path string) bool {
-	return path == "/" || path == "/app.js" || path == "/favicon.svg" || strings.HasPrefix(path, "/vendor/")
+	return path == "/" || path == "/app.js" || path == "/favicon.svg" || path == "/apple-touch-icon.png" || strings.HasPrefix(path, "/vendor/")
 }
 
 func servePage(w http.ResponseWriter, r *http.Request) {
