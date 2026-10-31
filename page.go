@@ -22,12 +22,20 @@ var webFiles = func() http.Handler {
 }()
 
 func isPage(path string) bool {
-	return path == "/" || path == "/app.js" || path == "/favicon.svg" || path == "/apple-touch-icon.png" || strings.HasPrefix(path, "/vendor/")
+	return path == "/" || path == "/app.js" || path == "/favicon.svg" || strings.HasPrefix(path, "/vendor/")
 }
 
 func servePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	webFiles.ServeHTTP(w, r)
+}
+
+// The PNG the Dockerfile renders from favicon.svg, since iOS ignores SVG icons on the home screen.
+const touchIconPath = "/usr/local/share/bifrost/apple-touch-icon.png"
+
+func serveTouchIcon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, touchIconPath)
 }
 
 func guarded(next http.HandlerFunc) http.HandlerFunc {

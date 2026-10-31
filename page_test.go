@@ -38,7 +38,7 @@ func TestPageAndAPIHeaders(t *testing.T) {
 }
 
 func TestPageIsServed(t *testing.T) {
-	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement", "/favicon.svg": "<svg", "/apple-touch-icon.png": "PNG"} {
+	for path, want := range map[string]string{"/": "bifrost-app", "/app.js": "api/channels", "/vendor/lit-all.min.js": "LitElement", "/favicon.svg": "<svg"} {
 		rec := httptest.NewRecorder()
 		servePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
