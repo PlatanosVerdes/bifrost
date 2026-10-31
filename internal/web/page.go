@@ -10,8 +10,11 @@ import (
 	"github.com/PlatanosVerdes/bifrost/internal/access"
 )
 
-// Lit is vendored under static/vendor so the page needs nothing but this process.
+// Lit is vendored under static/vendor so the page needs nothing but this process. iOS ignores SVG
+// icons on the home screen, so it gets a PNG of favicon.svg, its background squared because iOS
+// rounds the corners itself.
 //
+//go:generate sh -c "echo 'svg > rect:first-of-type { rx: 0; ry: 0 }' | rsvg-convert --width 180 --height 180 --stylesheet /dev/stdin static/favicon.svg -o static/apple-touch-icon.png"
 //go:embed static
 var webFS embed.FS
 
