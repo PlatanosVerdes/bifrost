@@ -26,21 +26,12 @@ RUN ./configure --disable-everything --disable-autodetect --disable-network --di
         --enable-encoder=mjpeg --enable-muxer=mjpeg --enable-filter=scale,format \
     && make -j"$(nproc)" ffmpeg && strip ffmpeg && cp ffmpeg /ffmpeg
 
-# iOS ignores SVG icons on the home screen, so the PNG is rendered from the same favicon.svg, its
-# background squared because iOS rounds the corners itself.
-FROM alpine:3.21 AS icon
-RUN apk add --no-cache rsvg-convert
-COPY web/favicon.svg /icon.svg
-RUN echo 'svg > rect:first-of-type { rx: 0; ry: 0 }' > /square.css \
-    && rsvg-convert --width 180 --height 180 --stylesheet /square.css /icon.svg -o /apple-touch-icon.png
-
 FROM alpine:3.21
 
 # The list comes from IPFS gateways and the guide from GitHub, both over HTTPS.
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /out/bifrost /usr/local/bin/bifrost
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
-COPY --from=icon /apple-touch-icon.png /usr/local/share/bifrost/apple-touch-icon.png
 
 # Owned by the user below so fresh named volumes are writable; bind mounts need the same owner on
 # the host, or `user:` set to the host folder's owner.
