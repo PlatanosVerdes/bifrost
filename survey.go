@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -116,12 +117,21 @@ func (h *hub) runSurvey(slug string, todo []string) {
 
 func (h *hub) surveyOne(name, id string) {
 	label := name + " [survey " + short(id) + "]"
+	h.waitForSwitches()
 	start := time.Now()
 	openBy := start.Add(min(h.sourceWait, probeOpenWait))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Until(openBy)+surveyFor+5*time.Second)
 	defer cancel()
-	target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-survey-%d", h.base, id, h.probes.Add(1))
-	resp, ok := open(ctx, h.client, target, nil, label, openBy)
+	session, err := h.engineSession(ctx, id)
+	if err != nil {
+		log.Printf("[survey] %s: %v", label, err)
+		h.noteOutcome(id, "failed")
+		return
+	}
+	// The engine keeps a session some 15 s after its player leaves, and past its session limit it stops
+	// the oldest, which is the one being watched: so every session is stopped the moment it is done.
+	defer session.stop()
+	resp, ok := open(ctx, h.client, session.Playback, nil, label, openBy)
 	if !ok {
 		h.noteOutcome(id, "failed")
 		return
@@ -169,4 +179,63 @@ collect:
 		}
 		f.SeenAt, f.Outcome = time.Now(), "probed"
 	})
+}
+
+// engineSession is a session the engine opened for one content id, with the URL that stops it.
+type engineSession struct {
+	Playback string `json:"playback_url"`
+	Command  string `json:"command_url"`
+}
+
+func (h *hub) engineSession(ctx context.Context, id string) (*engineSession, error) {
+	target := fmt.Sprintf("%s/ace/getstream?id=%s&format=json&pid=bifrost-survey-%d", h.base, id, h.probes.Add(1))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: probeOpenWait}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var answer struct {
+		Response *engineSession `json:"response"`
+		Error    *string        `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return nil, fmt.Errorf("engine answer: %v", err)
+	}
+	if answer.Response == nil || answer.Response.Playback == "" {
+		reason := "no session"
+		if answer.Error != nil {
+			reason = *answer.Error
+		}
+		return nil, fmt.Errorf("engine: %s", reason)
+	}
+	return answer.Response, nil
+}
+
+func (e *engineSession) stop() {
+	if e.Command == "" {
+		return
+	}
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(e.Command + "?method=stop")
+	if err != nil {
+		log.Printf("[survey] stopping an engine session: %v", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// waitForSwitches holds a survey while a pick or a probe opens a source, so the two never add up.
+func (h *hub) waitForSwitches() {
+	for {
+		h.mu.Lock()
+		busy := h.probing != ""
+		h.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(time.Second)
+	}
 }
