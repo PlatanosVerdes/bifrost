@@ -163,12 +163,12 @@ func (h *Hub) onAir(slug string) (now, next *catalog.Airing) {
 // recentlyFailed is how long a source that failed to open is tried after the others.
 const recentlyFailed = 15 * time.Minute
 
-// The source that last produced video goes first and one that failed lately last, so a dead first
-// source does not cost every open its whole wait.
+// The source that last produced video goes first, one that looped lately after the rest and one that
+// failed lately last, so a dead first source does not cost every open its whole wait.
 func (h *Hub) ordered(slug string, ids []string) []string {
 	h.mu.Lock()
 	good := h.lastGood[slug]
-	failed := map[string]bool{}
+	failed, looping := map[string]bool{}, h.loopingLately(ids)
 	for _, id := range ids {
 		if f := h.facts[id]; f != nil && f.Outcome == "failed" && time.Since(f.SeenAt) < recentlyFailed {
 			failed[id] = true
@@ -178,6 +178,8 @@ func (h *Hub) ordered(slug string, ids []string) []string {
 	rank := func(id string) int {
 		switch {
 		case failed[id]:
+			return 3
+		case looping[id]:
 			return 2
 		case id == good:
 			return 0
@@ -275,6 +277,17 @@ func (h *Hub) Channels() []ChannelInfo {
 		out[len(out)-1].Now, out[len(out)-1].Next = h.schedule.At(m3u.Attr(g.Extinf, "tvg-id"), time.Now())
 		if st, ok := playing[slug]; ok {
 			out[len(out)-1].Playing = &st
+		}
+	}
+	return out
+}
+
+// loopingLately is the ids that went back to play a stretch again in the last recentlyFailed; h.mu is held.
+func (h *Hub) loopingLately(ids []string) map[string]bool {
+	out := map[string]bool{}
+	for _, id := range ids {
+		if f := h.facts[id]; f != nil && f.Loops > 0 && time.Since(f.LoopedAt) < recentlyFailed {
+			out[id] = true
 		}
 	}
 	return out

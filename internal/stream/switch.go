@@ -120,8 +120,11 @@ func (p Policy) judge(current, candidate reading, stillStarving bool) (bool, str
 }
 
 // nextCandidate picks the source to probe: one never probed, in the list's order, else the one
-// probed longest ago.
-func nextCandidate(ids []string, current string, probedAt map[string]time.Time) string {
+// probed longest ago. A source that loops lately is probed only when every other one does too.
+func nextCandidate(ids []string, current string, probedAt map[string]time.Time, looping map[string]bool) string {
+	if rest := slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return looping[id] }); others(rest, current) > 0 {
+		ids = rest
+	}
 	best := ""
 	for _, id := range ids {
 		if id == current {
@@ -271,7 +274,7 @@ func (s *stream) maybeProbe(w *swarm) {
 	if s.h.probedAt[s.slug] == nil {
 		s.h.probedAt[s.slug] = map[string]time.Time{}
 	}
-	cand := nextCandidate(pool, current, s.h.probedAt[s.slug])
+	cand := nextCandidate(pool, current, s.h.probedAt[s.slug], s.h.loopingLately(pool))
 	s.h.probing = s.slug
 	s.h.probedAt[s.slug][cand] = now
 	s.h.mu.Unlock()
