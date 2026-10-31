@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/favicon.svg" width="96" alt="">
+  <img src="internal/web/static/favicon.svg" width="96" alt="">
 </p>
 
 <h1 align="center">bifrost</h1>
@@ -71,7 +71,7 @@ Several lists add up their sources per channel; see [Configuration](docs/configu
 | [Configuration](docs/configuration.md) | Every setting, the HTTP routes and the metrics |
 | [Streams](docs/streams.md) | Swarm health, moving to a better source, resolution step-down, the slates, streams nobody watches |
 | [Sharing](docs/sharing.md) | The page behind Cloudflare Access, and invite links |
-| [Slates](slate/README.md) | How the two embedded slates are made and rebuilt |
+| [Slates](internal/slate/render/README.md) | How the two embedded slates are made and rebuilt |
 | [Rules that must stay](docs/rules.md) | Things that look odd and were each learnt by breaking them. Read before changing the proxy |
 
 ## Development

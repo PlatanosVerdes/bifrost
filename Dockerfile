@@ -5,11 +5,10 @@ WORKDIR /src
 # The tag this image is built from, logged at start so what is deployed is readable from the logs.
 ARG VERSION=local
 COPY go.mod ./
-COPY *.go ./
-COPY web/ ./web/
-COPY slate/offair.ts slate/loading.ts ./slate/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 # Static binary: the runtime image has no libc to link against.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/bifrost ./cmd/bifrost
 
 # Only what `ffmpeg -c copy` needs to remux MPEG-TS through a pipe, plus a scaled JPEG of one keyframe
 # for the page's thumbnails: a few MB instead of Alpine's ~80.

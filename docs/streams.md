@@ -127,7 +127,7 @@ while the sources are first tried, then, once every source has failed within `CH
 off-air slate. bifrost keeps trying the sources every 30 s while anyone watches. The first one to
 deliver video is remuxed next to the slate and takes over through the same handover as a switch, so
 the stream never restarts. Both slates are embedded MPEG-TS played at their own pace, at no CPU cost;
-see [slate/README.md](../slate/README.md) to rebuild them.
+see [internal/slate/render/README.md](../internal/slate/render/README.md) to rebuild them.
 
 ## Streams nobody watches
 
