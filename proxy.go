@@ -60,6 +60,7 @@ type hub struct {
 	probes        atomic.Int64
 
 	ffmpeg  string // remuxes every source when set; empty relays sources raw
+	thumbs  *thumbs
 	slate   *slate // played once a channel's sources have all failed; needs ffmpeg
 	loading *slate
 	ladder  bool // a starving channel may step down to its lower versions' sources
@@ -479,6 +480,7 @@ func (s *stream) relay(ctx context.Context, up *upstream, start time.Time) {
 
 func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, align *tsAligner, reb *tsRebaser, mux *remux) {
 	var next *cutover
+	grab := s.h.thumbs.grab(up.id)
 	stuck := time.NewTicker(time.Second)
 	defer stuck.Stop()
 	for {
@@ -498,6 +500,7 @@ func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, a
 				continue
 			}
 			s.relayed.Add(int64(len(out)))
+			grab.push(out)
 			if mux == nil {
 				s.broadcast(out)
 			} else {
@@ -541,6 +544,7 @@ func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, a
 			if mux == nil {
 				s.switchTo(up, h)
 				up, align = h.up, &tsAligner{dropLead: true}
+				grab = s.h.thumbs.grab(up.id)
 				continue
 			}
 			next.abandon("another source was handed over")
@@ -568,6 +572,7 @@ func (s *stream) relayFrom(ctx context.Context, up *upstream, start time.Time, a
 			mux.stop()
 			next.timer.Stop()
 			up, align, mux = next.h.up, next.align, next.mux
+			grab = s.h.thumbs.grab(up.id)
 			mux.delivered, reb.restart = true, nil
 			s.broadcast(reb.splice(next.held))
 			next = nil

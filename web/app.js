@@ -88,7 +88,7 @@ const base = css`
 const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
 
 class SourcePicker extends LitElement {
-  static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true } };
+  static properties = { channel: { attribute: false }, reload: { attribute: false }, count: { type: Boolean }, pick: { state: true }, zoom: { state: true }, edit: { state: true } };
   static styles = [base, css`
     :host { display: inline; }
     .link:focus-visible, .x:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -97,7 +97,7 @@ class SourcePicker extends LitElement {
     .ctl { font: inherit; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 0; border-radius: 6px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
     .ctl:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
     .ctl:disabled { color: var(--muted); background: var(--chip); opacity: .7; cursor: default; }
-    dialog { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
+    dialog { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
     dialog::backdrop { background: rgba(0, 0, 0, .45); }
     .sheet { position: relative; padding: 18px; outline: 0; }
     dialog h3 { margin: 0 32px 2px 0; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--ink); display: block; }
@@ -105,8 +105,21 @@ class SourcePicker extends LitElement {
     .panel { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
     .panel li { border-top: 1px solid var(--line); }
     .panel li:first-child { border-top: 0; }
-    .panel li.line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; padding: 9px 12px; font-size: 13px; }
-    .line .info { grid-column: 1 / 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .panel li.line { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 3px 12px; align-items: center; padding: 9px 12px; font-size: 13px; }
+    .line .thumb { grid-row: 1 / 3; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--chip); border: 0; padding: 0; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
+    .line button.thumb { cursor: zoom-in; }
+    .line .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .line .info { grid-column: 2 / 4; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .info > * + * { margin-left: 10px; }
+    .id { font-family: var(--font-data); font-size: 11px; color: var(--muted); margin-left: 8px; user-select: all; }
+    .acts { display: flex; gap: 6px; }
+    .ctl.minus { color: var(--calm-bad); background: color-mix(in srgb, var(--calm-bad) 10%, transparent); }
+    .ctl.minus:hover { background: color-mix(in srgb, var(--calm-bad) 18%, transparent); }
+    .removed { margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .removed summary { cursor: pointer; margin-bottom: 8px; }
+    .zoom { position: absolute; inset: 0; background: var(--surface); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 8px; cursor: zoom-out; }
+    .zoom img { width: 100%; border-radius: 8px; display: block; }
+    .zoom p { margin: 0; }
     .x { position: absolute; top: 12px; right: 12px; font: inherit; font-size: 14px; line-height: 1; color: var(--muted); background: var(--chip); border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
     .tag { font-family: var(--font-data); font-size: 11px; border-radius: 5px; padding: 0 6px; margin-left: 6px; color: var(--muted); background: var(--chip); }
     .tag.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
@@ -134,6 +147,30 @@ class SourcePicker extends LitElement {
     }
   }
 
+  async block(x, removed) {
+    const c = this.channel;
+    this.edit = { id: x.id };
+    try {
+      const r = await fetch(`api/channels/${c.slug}/blocked/${x.id}`, { method: removed ? "POST" : "DELETE" })
+        .catch(() => { throw new Error("Could not reach bifrost"); });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error(body?.error || `No answer from bifrost (HTTP ${r.status})`);
+      }
+      await this.reload?.();
+      this.edit = null;
+    } catch (e) {
+      this.edit = { id: x.id, error: e.message };
+      setTimeout(() => { this.edit = null; }, 6000);
+    }
+  }
+
+  thumb(x) {
+    if (!known(x.thumb_at)) return html`<span class="thumb">no preview</span>`;
+    const src = `api/thumbs/${x.id}?t=${Date.parse(x.thumb_at)}`;
+    return html`<button class="thumb" aria-label="Enlarge the picture of ${x.id.slice(0, 8)}" @click=${() => { this.zoom = { ...x, src }; }}><img src=${src} alt="" loading="lazy"></button>`;
+  }
+
   // Numbered in the playlist's order, so a source keeps its number whichever plays.
   ranked() {
     const c = this.channel;
@@ -143,11 +180,11 @@ class SourcePicker extends LitElement {
 
   facts(x) {
     const kept = x.kept ? html`<span class="muted">Not in the list</span>` : "";
-    if (!x.seen_at && x.headroom == null) return [kept, html`<span class="muted">Not tried yet</span>`].filter(Boolean).map((b, i) => html`${i ? " · " : ""}${b}`);
+    if (!x.seen_at && x.headroom == null) return [kept, html`<span class="muted">Not tried yet</span>`].filter(Boolean);
     const tone = x.headroom == null ? "" : swarmTone({ headroom: x.headroom }) || "quick";
     const bits = [kept, x.outcome === "failed" ? html`<span class="bad">Failed</span>` : "", x.headroom != null ? html`<span class=${tone}>${x.headroom.toFixed(2)}x</span>` : "",
       x.height ? `${x.height}p` : "", x.audio, x.peers != null ? plural(x.peers, "peer") : "", hhmm(x.seen_at)].filter(Boolean);
-    return bits.map((b, i) => html`${i ? " · " : ""}${b}`);
+    return bits.map((b) => html`<span>${b}</span>`);
   }
 
   quick() {
@@ -167,13 +204,24 @@ class SourcePicker extends LitElement {
     <dialog aria-label="Sources of ${c.name}" @click=${(e) => { if (e.target === e.currentTarget) e.target.close(); }}>
       <div class="sheet" tabindex="-1" autofocus><button class="x" aria-label="Close" @click=${(e) => e.target.closest("dialog").close()}>✕</button><h3>${c.name}</h3><p>Pick a source for this channel. Everyone watching it switches too.</p>
         <ul class="panel">${this.ranked().map((x, i) => {
-          const on = x.id === c.playing.source, mine = pick?.id === x.id;
+          const on = x.id === c.playing.source, mine = pick?.id === x.id, edit = this.edit?.id === x.id ? this.edit : null;
           return html`<li class="line">
-            <span><b>Source ${x.n}</b>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}</span>
-            ${on ? html`<span class="tag on">Playing</span>`
-              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>`}
+            ${this.thumb(x)}
+            <span><b>Source ${x.n}</b><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${i === 0 && x.headroom != null && x.outcome !== "failed" ? html`<span class="tag">best</span>` : nothing}${mine && pick.error ? html` <span class="bad">${pick.error}</span>` : nothing}${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
+            <span class="acts">${on ? html`<span class="tag on">Playing</span>`
+              : html`<button class="ctl" ?disabled=${pending} @click=${() => this.choose(x)}>${mine && pending ? "switching…" : "Play"}</button>
+                <button class="ctl minus" title="Remove from this channel" aria-label="Remove source ${x.n} from this channel" ?disabled=${pending || edit || c.ids.length < 2} @click=${() => this.block(x, true)}>−</button>`}</span>
             <span class="info">${this.facts(x)}</span></li>`;
-        })}</ul></div>
+        })}</ul>
+        ${c.blocked?.length ? html`<details class="removed"><summary>${plural(c.blocked.length, "removed source")}</summary>
+          <ul class="panel">${c.blocked.map((x) => {
+            const edit = this.edit?.id === x.id ? this.edit : null;
+            return html`<li class="line">${this.thumb(x)}
+              <span><span class="id" title=${x.id}>${x.id.slice(0, 8)}</span>${edit?.error ? html` <span class="bad">${edit.error}</span>` : nothing}</span>
+              <span class="acts"><button class="ctl" ?disabled=${edit} @click=${() => this.block(x, false)}>Restore</button></span>
+              <span class="info">${this.facts(x)}</span></li>`;
+          })}</ul></details>` : nothing}
+        ${this.zoom ? html`<div class="zoom" @click=${() => { this.zoom = null; }}><img src=${this.zoom.src} alt="Picture of ${this.zoom.id.slice(0, 8)}"><p class="muted"><span class="id" title=${this.zoom.id}>${this.zoom.id}</span> ${hhmm(this.zoom.thumb_at)}</p></div>` : nothing}</div>
     </dialog>`;
   }
 }

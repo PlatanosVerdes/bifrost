@@ -48,17 +48,17 @@ func (c *catalog) lower(slug string) []string {
 	if tvg == "" || top == 0 {
 		return nil
 	}
-	var siblings []*channelGroup
+	var siblings []string
 	for s, g := range c.groups {
 		h := height(g.Name)
 		if s != slug && h > 0 && h < top && extractAttr(g.extinf, "tvg-id") == tvg && resolutionSuffix.ReplaceAllString(g.Name, "") == stem {
-			siblings = append(siblings, g)
+			siblings = append(siblings, s)
 		}
 	}
-	sort.Slice(siblings, func(i, j int) bool { return height(siblings[i].Name) > height(siblings[j].Name) })
+	sort.Slice(siblings, func(i, j int) bool { return height(c.groups[siblings[i]].Name) > height(c.groups[siblings[j]].Name) })
 	var ids []string
-	for _, g := range siblings {
-		ids = append(ids, g.IDs...)
+	for _, s := range siblings {
+		ids = append(ids, c.unblocked(s, c.groups[s].IDs)...)
 	}
 	return ids
 }

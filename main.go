@@ -31,6 +31,8 @@ func main() {
 	h.policy.starvingBelow = getfloat("STARVING_BELOW", h.policy.starvingBelow)
 	h.ffmpeg = findFFmpeg(getenv("FFMPEG", "ffmpeg"))
 	h.ladder = getenv("RESOLUTION_SWITCH", "on") != "off"
+	h.thumbs = newThumbs(filepath.Join(cfg.stateDir, "thumbs"), h.ffmpeg)
+	cat.blocked = loadBlocklist(cfg.stateDir)
 	factsFile := filepath.Join(cfg.stateDir, "sources.json")
 	h.loadFacts(factsFile)
 	go h.keepFacts(factsFile, 30*time.Second)
@@ -96,6 +98,9 @@ func routes(h *hub, acc *access) *http.ServeMux {
 	mux.HandleFunc("/api/status", guarded(h.serveStatus))
 	mux.HandleFunc("/api/channels", guarded(h.serveChannels))
 	mux.HandleFunc("POST /api/channels/{slug}/source", guarded(h.servePick))
+	mux.HandleFunc("POST /api/channels/{slug}/blocked/{id}", guarded(h.serveBlock))
+	mux.HandleFunc("DELETE /api/channels/{slug}/blocked/{id}", guarded(h.serveBlock))
+	mux.HandleFunc("GET /api/thumbs/{id}", guarded(h.serveThumb))
 	mux.HandleFunc("/api/access", guarded(acc.serve))
 	mux.HandleFunc("/api/access/members", guarded(acc.serveMembers))
 	mux.HandleFunc("/api/access/links", guarded(acc.serveLinks))
