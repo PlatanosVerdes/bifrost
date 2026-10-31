@@ -1,5 +1,5 @@
 // bifrost's status page: the app element fetches, every component below renders what it is given.
-import { LitElement, html, css, nothing } from "./vendor/lit-all.min.js";
+import { LitElement, html, svg, css, nothing } from "./vendor/lit-all.min.js";
 
 const REFRESH_MS = 3000;
 
@@ -88,6 +88,9 @@ const base = css`
 const switchable = (c) => c && c.ids.length > 1 && c.playing && !c.playing.waiting;
 // A rainbow filled up to done of total, the half of the source being opened counted.
 const progress = (done, total) => `--done: ${Math.min(100, Math.round((100 * (done + 0.5)) / total))}%`;
+// A source with no picture yet: a struck-out screen, in the page's muted ink.
+const noPicture = svg`<svg class="none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4M4 4l16 16"/></svg>`;
+const thumbSrc = (id, at) => `api/thumbs/${id}?t=${Date.parse(at)}`;
 const toast = (from, text) => from.dispatchEvent(new CustomEvent("toast", { detail: text, bubbles: true, composed: true }));
 
 class SourcePicker extends LitElement {
@@ -112,6 +115,8 @@ class SourcePicker extends LitElement {
     .line .thumb { grid-row: 1 / 3; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--chip); border: 0; padding: 0; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
     .line button.thumb { cursor: zoom-in; }
     .line .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .line span.thumb { background: var(--stripes); color: var(--muted); }
+    .line .thumb svg.none { width: 22px; height: 22px; opacity: .8; }
     .line .info { grid-column: 2 / 4; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
     .info > * + * { margin-left: 10px; }
     .id { font-family: var(--font-data); font-size: 11px; color: var(--muted); margin-left: 8px; user-select: all; }
@@ -204,12 +209,12 @@ class SourcePicker extends LitElement {
   surveyNote() {
     const sv = this.channel.survey;
     if (sv) return html`<span class="checking" role="status"><span class="bar" style=${progress(sv.done, sv.total)}></span>${sv.done + 1} of ${sv.total}</span>`;
-    return html`<button class="link" ?disabled=${this.check?.busy} @click=${() => this.survey()}>Check the others</button>`;
+    return html`<button class="link" ?disabled=${this.check?.busy} @click=${() => this.survey()}>Check sources</button>`;
   }
 
   thumb(x) {
-    if (!known(x.thumb_at)) return html`<span class="thumb">no preview</span>`;
-    const src = `api/thumbs/${x.id}?t=${Date.parse(x.thumb_at)}`;
+    if (!known(x.thumb_at)) return html`<span class="thumb" title="No picture yet: Check sources or play it">${noPicture}</span>`;
+    const src = thumbSrc(x.id, x.thumb_at);
     return html`<button class="thumb" aria-label="Enlarge the picture of ${x.id.slice(0, 8)}" @click=${() => { this.zoom = { ...x, src }; }}><img src=${src} alt="" loading="lazy"></button>`;
   }
 
@@ -362,7 +367,7 @@ class ChannelBoard extends LitElement {
 customElements.define("channel-board", ChannelBoard);
 
 class ActivityView extends LitElement {
-  static properties = { status: { attribute: false }, channels: { attribute: false }, reload: { attribute: false } };
+  static properties = { status: { attribute: false }, channels: { attribute: false }, reload: { attribute: false }, zoom: { state: true } };
   static styles = [base, css`
     .row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; }
     .row > div { min-width: 0; overflow-wrap: anywhere; }
@@ -371,9 +376,23 @@ class ActivityView extends LitElement {
     .devices li { display: grid; grid-template-columns: none; padding: 0; border: 0; }
     .ring { width: 44px; height: 44px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); }
     .ring.on { border: 2px solid var(--accent); color: var(--accent); }
-    .row p { margin: 2px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
-    .row p.air { color: var(--ink); font-size: 15px; font-weight: 500; }
-    .row p.air span { color: var(--muted); font-weight: 400; }
+    .row p, .title p { margin: 2px 0 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
+    .row p.air, .title p.air { color: var(--ink); font-size: 15px; font-weight: 500; }
+    .row p.air span, .title p.air span { color: var(--muted); font-weight: 400; }
+    .stream { display: grid; grid-template-columns: minmax(0, 160px) minmax(0, 1fr); gap: 14px 20px; align-items: center; }
+    @media (max-width: 720px) { .stream { grid-template-columns: minmax(0, 1fr); } }
+    .title { min-width: 0; overflow-wrap: anywhere; }
+    .shot { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: var(--chip); border: 0; padding: 0; display: block; }
+    button.shot { cursor: zoom-in; }
+    button.shot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .shot.empty { display: grid; place-content: center; justify-items: center; gap: 8px; padding: 16px; text-align: center; font-size: 12px; color: var(--muted);
+      background: var(--stripes); }
+    .shot.empty svg { width: 32px; height: 32px; opacity: .8; }
+    .shot .at { position: absolute; left: 8px; bottom: 8px; font-family: var(--font-data); font-size: 11px; color: #fff; background: rgba(0, 0, 0, .6); border-radius: 5px; padding: 1px 6px; }
+    dialog.zoom { width: min(960px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 12px; background: #000; cursor: zoom-out; }
+    dialog.zoom::backdrop { background: rgba(0, 0, 0, .7); }
+    dialog.zoom img { width: 100%; display: block; }
     .duo { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
     .big { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 10px; }
     .big b { display: block; font-family: var(--font-display); font-weight: 500; font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -409,6 +428,19 @@ class ActivityView extends LitElement {
     .tag.probe { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   `];
 
+  // The playing source's latest picture, cut every couple of minutes from what already streams.
+  shot(st) {
+    if (!known(st.thumb_at)) return html`<div class="shot empty">${noPicture}<span>No picture yet, it shows some 20 s after the source starts</span></div>`;
+    const src = thumbSrc(st.source, st.thumb_at), alt = `What ${st.channel} showed at ${hhmm(st.thumb_at)}`;
+    return html`<button class="shot" aria-label="Enlarge: ${alt}" @click=${() => this.enlarge({ src, alt })}><img src=${src} alt=""><span class="at">${hhmm(st.thumb_at)}</span></button>`;
+  }
+
+  async enlarge(zoom) {
+    this.zoom = zoom;
+    await this.updateComplete;
+    this.renderRoot.querySelector("dialog.zoom")?.showModal();
+  }
+
   screen(on) {
     return html`<div class="ring ${on ? "on" : ""}" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/></svg></div>`;
   }
@@ -426,12 +458,12 @@ class ActivityView extends LitElement {
     const watchers = jellyfin.filter((p) => st.channel.startsWith(p.channel));
     const jf = watchers[0];
     const transcoding = jf && jf.video !== "copy";
-    return html`<div class="stream"><div class="row">${this.screen(true)}<div>
+    return html`<div class="stream">${this.shot(st)}<div class="body"><div class="title">
       <b>${st.channel}</b>${jf ? (transcoding
         ? html`<span class="tag trans" title="Jellyfin re-encodes the video on the Pi">re-encoding</span>`
         : html`<span class="tag copy" title="Jellyfin passes the video through untouched">direct</span>`) : nothing}${transcoding && jf.speed && jf.speed < 0.95 ? html`<span class="tag slow" title="Jellyfin's re-encode against live: below 1x the picture stalls">falling behind · ${jf.speed.toFixed(2)}x</span>` : nothing}${st.probing ? html`<span class="tag probe" title="Measuring another source of the channel next to this one, to move to it if it is clearly better">trying ${st.probing_source.slice(0, 8)}…</span>` : nothing}
       ${st.now ? html`<p class="air">${st.now.title} <span>until ${hhmm(st.now.stop)}${st.next ? `, then ${st.next.title}` : ""}</span></p>` : nothing}
-    </div></div>
+    </div>
     <div class="facts">
       ${this.watching(st, watchers)}
       ${this.swarmFact(st.swarm)}
@@ -440,7 +472,7 @@ class ActivityView extends LitElement {
         ${switchable(this.channels?.find((c) => c.slug === st.slug)) ? html`<span class="sub"><source-picker count .channel=${this.channels.find((c) => c.slug === st.slug)} .reload=${this.reload}></source-picker></span>` : nothing}
         ${transcoding && jf.reasons ? html`<span class="sub">Jellyfin re-encodes: ${jf.reasons.join(", ")}</span>` : nothing}</div>
     </div>
-    </div>`;
+    </div></div>`;
   }
 
   // A Jellyfin connection no session plays is one Jellyfin left open (a zap, a TV switched off), not a viewer.
@@ -504,6 +536,7 @@ class ActivityView extends LitElement {
     return html`
       <h2 class="first">Now</h2>
       <section class="card">${this.now()}</section>
+      ${this.zoom ? html`<dialog class="zoom" aria-label=${this.zoom.alt} @click=${(e) => e.currentTarget.close()} @close=${() => { this.zoom = null; }}><img src=${this.zoom.src} alt=${this.zoom.alt}></dialog>` : nothing}
       <div class="duo">
         <div><h2>Recent opens</h2><section class="card"><ul class="scroller">${this.recent()}</ul></section></div>
         <div><h2>List and guide</h2><section class="card">

@@ -15,6 +15,10 @@
     /* States that should be read, not shouted: tight but fine, short, failed, played before. */
     --calm-ok: #3f7d5f; --calm-warn: #8a6a2a; --calm-bad: #a5544f; --played: #5c6f9e;
     --spectrum: linear-gradient(90deg, #e4475b, #f08a3e, #e7c13f, #3fb27f, #3f8fe0, #7a5ce6);
+    /* A source with no picture yet: diagonal stripes over a faint spectrum. */
+    --stripes: repeating-linear-gradient(135deg, var(--chip) 0 7px, transparent 7px 14px),
+      linear-gradient(135deg, color-mix(in srgb, #e4475b 16%, var(--chip)), color-mix(in srgb, #f08a3e 16%, var(--chip)), color-mix(in srgb, #e7c13f 16%, var(--chip)),
+        color-mix(in srgb, #3fb27f 16%, var(--chip)), color-mix(in srgb, #3f8fe0 16%, var(--chip)), color-mix(in srgb, #7a5ce6 16%, var(--chip)));
     --font-display: "Unbounded", "Figtree", system-ui, sans-serif;
     --font-ui: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
