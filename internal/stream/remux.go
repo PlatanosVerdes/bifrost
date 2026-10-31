@@ -72,20 +72,17 @@ func startRemux(parent context.Context, bin, label string, onInfo func(height in
 	}()
 	go func() {
 		sc := bufio.NewScanner(stderr)
-		var height int
-		var audio string
+		var info listing
 		var last []string
-		listing := true
+		listed := false
 		for sc.Scan() {
 			line := sc.Text()
-			if listing {
+			if !listed {
 				if strings.HasPrefix(line, "Output #0") {
-					listing = false
-					onInfo(height, audio)
-				} else if h, a := streamInfo(line); h > 0 && height == 0 {
-					height = h
-				} else if a != "" && audio == "" {
-					audio = a
+					listed = true
+					onInfo(info.height, info.audios())
+				} else {
+					info.read(line)
 				}
 			}
 			if last = append(last, line); len(last) > stderrLines {
