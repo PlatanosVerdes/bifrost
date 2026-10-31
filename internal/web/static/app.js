@@ -545,7 +545,7 @@ class ActivityView extends LitElement {
     const streams = this.status.streams || [], jellyfin = this.status.jellyfin_playing || [];
     if (!streams.length) {
       return html`<div class="row">${this.screen(false)}<div><b>${t("Nobody is watching")}</b>
-        <details class="more"><summary>${info}<span>${t("What shows here")}</span></summary><p>${t("When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.")}</p></details></div></div>`;
+        <p>${t("When a channel is open it shows here: what it airs by the guide, its source, how many are watching, how soon the engine gave the first video, its peers and whether it downloads faster than the channel plays, whether Jellyfin copies the video or re-encodes it, and whether it keeps up with live.")}</p></div></div>`;
     }
     return html`<div class="scroller">${streams.map((st) => this.stream(st, jellyfin))}</div>`;
   }
