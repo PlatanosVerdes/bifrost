@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PlatanosVerdes/bifrost/internal/httpx"
+	"github.com/PlatanosVerdes/bifrost/internal/i18n"
 )
 
 type SourceFacts struct {
@@ -139,25 +140,25 @@ func streamInfo(line string) (height int, audio string) {
 
 func (h *Hub) ServePick(w http.ResponseWriter, r *http.Request) {
 	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-		httpx.WriteError(w, http.StatusUnsupportedMediaType, "Send the source as JSON")
+		httpx.WriteError(w, http.StatusUnsupportedMediaType, i18n.T(r, "Send the source as JSON"))
 		return
 	}
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		httpx.WriteError(w, http.StatusForbidden, "That request came from another site")
+		httpx.WriteError(w, http.StatusForbidden, i18n.T(r, "That request came from another site"))
 		return
 	}
 	var body struct {
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "The source could not be read")
+		httpx.WriteError(w, http.StatusBadRequest, i18n.T(r, "The source could not be read"))
 		return
 	}
 	slug := r.PathValue("slug")
 	_, ids := h.table.Lookup(slug)
 	n := slices.Index(ids, body.ID) + 1
 	if n == 0 {
-		httpx.WriteError(w, http.StatusNotFound, "That is not one of this channel's sources")
+		httpx.WriteError(w, http.StatusNotFound, i18n.T(r, "That is not one of this channel's sources"))
 		return
 	}
 
@@ -169,10 +170,10 @@ func (h *Hub) ServePick(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	switch {
 	case s == nil:
-		httpx.WriteError(w, http.StatusConflict, "The channel is not playing")
+		httpx.WriteError(w, http.StatusConflict, i18n.T(r, "The channel is not playing"))
 		return
 	case busy:
-		httpx.WriteError(w, http.StatusConflict, "Another switch is running, try again in a few seconds")
+		httpx.WriteError(w, http.StatusConflict, i18n.T(r, "Another switch is running, try again in a few seconds"))
 		return
 	}
 	// Ends like a probe, so the automatic switch waits its cooldown before overriding the pick.
@@ -191,7 +192,7 @@ func (h *Hub) ServePick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[proxy] %s source %d (%s) picked on the page", s.label, n, short(body.ID))
-	failed := fmt.Sprintf("Source %d did not start", n)
+	failed := i18n.T(r, "Source %d did not start", n)
 	start := time.Now()
 	openBy := start.Add(min(h.sourceWait, probeOpenWait))
 	label := s.label + " [pick " + short(body.ID) + "]"
@@ -215,11 +216,11 @@ func (h *Hub) ServePick(w http.ResponseWriter, r *http.Request) {
 	case s.handover <- hv:
 	case <-s.ctx.Done():
 		hv.up.cancel()
-		httpx.WriteError(w, http.StatusConflict, "The channel stopped playing")
+		httpx.WriteError(w, http.StatusConflict, i18n.T(r, "The channel stopped playing"))
 		return
 	case <-time.After(probeOpenWait):
 		hv.up.cancel()
-		httpx.WriteError(w, http.StatusConflict, "The channel is busy, try again in a few seconds")
+		httpx.WriteError(w, http.StatusConflict, i18n.T(r, "The channel is busy, try again in a few seconds"))
 		return
 	}
 	if reason := <-hv.outcome; reason != "" {

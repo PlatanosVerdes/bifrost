@@ -53,6 +53,12 @@ func join(a *Access, token, link string) *httptest.ResponseRecorder {
 	return w
 }
 
+// letIn is the page someone just added gets: it opens bifrost after a wait, since Cloudflare needs a
+// moment to see the new member.
+func letIn(w *httptest.ResponseRecorder) bool {
+	return w.Code == 200 && strings.Contains(w.Body.String(), `content="15;url=/"`)
+}
+
 func members(t *testing.T, f *fakeCloudflare, a *Access) []string {
 	t.Helper()
 	_, got, _ := get(t, a, f.token("boss@example.com"))
@@ -78,7 +84,7 @@ func TestJoinLinkLetsOnePersonIn(t *testing.T) {
 	if w := join(a, f.tokenFor("ana@example.com", "aud-join"), link); w.Code != 303 {
 		t.Fatalf("ana: %d %s", w.Code, w.Body)
 	}
-	if w := join(a, f.tokenFor("Bob@example.com", "aud-join"), link); w.Code != 303 || w.Header().Get("Location") != "/" {
+	if w := join(a, f.tokenFor("Bob@example.com", "aud-join"), link); !letIn(w) {
 		t.Fatalf("bob: %d %s", w.Code, w.Body)
 	}
 	if m := members(t, f, a); !reflect.DeepEqual(m, []string{"ana@example.com", "bob@example.com"}) {
@@ -184,7 +190,7 @@ func TestJoinMissesCallNoAPI(t *testing.T) {
 	a := f.joinAccess(t)
 	_, got := sendLinks(t, a, "POST", f.token("boss@example.com"), `{"group":"g-own"}`)
 	link := strings.TrimPrefix(got.Created, "https://tv.example.com/join/")
-	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); w.Code != 303 {
+	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); !letIn(w) {
 		t.Fatalf("bob: %d", w.Code)
 	}
 	before := f.calls.Load()
@@ -232,7 +238,7 @@ func TestJoinFailsClosedWhenTheClaimIsNotSaved(t *testing.T) {
 		t.Fatal("bob was added")
 	}
 	os.Chmod(dir, 0o700)
-	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); w.Code != 303 || len(f.puts) != 1 {
+	if w := join(a, f.tokenFor("bob@example.com", "aud-join"), link); !letIn(w) || len(f.puts) != 1 {
 		t.Fatalf("retry: %d, %d PUTs", w.Code, len(f.puts))
 	}
 }

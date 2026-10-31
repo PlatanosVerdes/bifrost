@@ -747,3 +747,18 @@ func TestAccessRoles(t *testing.T) {
 		t.Errorf("removing ana answered %d and left her admin %t", w.Code, isAdmin("ana@example.com"))
 	}
 }
+
+func TestErrorsComeInTheBrowsersLanguage(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Accept-Language", "es-ES,es;q=0.9")
+	for err, want := range map[error]string{errLastMember: "Una lista no puede quedarse vacía", errNotEditable: "Esa lista no se puede editar"} {
+		w := httptest.NewRecorder()
+		providerError(w, r, err)
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("%v: %s", err, w.Body)
+		}
+	}
+	if got := emailError(r, badEmail("ana@")); got != "No es una dirección de correo: ana@" {
+		t.Errorf("bad email: %q", got)
+	}
+}

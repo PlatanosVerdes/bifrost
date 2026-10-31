@@ -6,6 +6,7 @@ import (
 
 	"github.com/PlatanosVerdes/bifrost/internal/catalog"
 	"github.com/PlatanosVerdes/bifrost/internal/httpx"
+	"github.com/PlatanosVerdes/bifrost/internal/i18n"
 	"github.com/PlatanosVerdes/bifrost/internal/stream"
 )
 
@@ -56,28 +57,28 @@ func (a *API) serveThumb(w http.ResponseWriter, r *http.Request) {
 // serveBlock takes a source out of a channel (POST) or puts it back (DELETE).
 func (a *API) serveBlock(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		httpx.WriteError(w, http.StatusForbidden, "That request came from another site")
+		httpx.WriteError(w, http.StatusForbidden, i18n.T(r, "That request came from another site"))
 		return
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
 	g := a.Catalog.Group(slug)
 	if g == nil || !slices.Contains(g.IDs, id) {
-		httpx.WriteError(w, http.StatusNotFound, "That is not one of this channel's sources")
+		httpx.WriteError(w, http.StatusNotFound, i18n.T(r, "That is not one of this channel's sources"))
 		return
 	}
 	block := r.Method == http.MethodPost
 	if block {
 		if _, left := a.Catalog.Lookup(slug); len(left) == 1 && left[0] == id {
-			httpx.WriteError(w, http.StatusConflict, "This is the channel's last source")
+			httpx.WriteError(w, http.StatusConflict, i18n.T(r, "This is the channel's last source"))
 			return
 		}
 		if a.Hub.PlayingSource(slug) == id {
-			httpx.WriteError(w, http.StatusConflict, "The channel is playing this source: pick another one first")
+			httpx.WriteError(w, http.StatusConflict, i18n.T(r, "The channel is playing this source: pick another one first"))
 			return
 		}
 	}
 	if err := a.Catalog.Blocked.Mark(slug, id, block); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "The blocklist could not be saved")
+		httpx.WriteError(w, http.StatusInternalServerError, i18n.T(r, "The blocklist could not be saved"))
 		return
 	}
 	httpx.WriteJSON(w, map[string]any{"id": id, "blocked": block})
