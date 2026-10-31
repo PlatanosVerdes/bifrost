@@ -140,19 +140,21 @@ func TestAlignerHandsOutWholePackets(t *testing.T) {
 		out = append(out, chunk...)
 		rest = rest[n:]
 	}
+	// The last packet waits for the next to show it is whole.
+	out = append(out, a.Push(tsStream(1, 'z'))...)
 	if !bytes.Equal(out, in) {
 		t.Errorf("relayed %d of %d bytes, or out of order", len(out), len(in))
 	}
 
 	spliced := &mpegts.Aligner{DropLead: true}
 	got := spliced.Push(append([]byte("half a packet from wherever the engine was"), tsStream(10, 'b')...))
-	if !bytes.Equal(got, tsStream(10, 'b')) {
+	if !bytes.Equal(got, tsStream(9, 'b')) {
 		t.Errorf("a spliced-in source started with %q, want its first packet", got[:8])
 	}
 
 	opening := &mpegts.Aligner{}
 	got = opening.Push(append([]byte("lead"), tsStream(10, 'c')...))
-	if !bytes.Equal(got, append([]byte("lead"), tsStream(10, 'c')...)) {
+	if !bytes.Equal(got, append([]byte("lead"), tsStream(9, 'c')...)) {
 		t.Error("the opening source lost its leading bytes")
 	}
 
