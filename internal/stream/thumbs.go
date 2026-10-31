@@ -108,13 +108,11 @@ func (t *thumbs) make(id string, ts []byte) (height int, audio string) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	jpg, err := cmd.Output()
+	var info listing
 	for _, line := range strings.Split(stderr.String(), "\n") {
-		if h, a := streamInfo(line); h > 0 && height == 0 {
-			height = h
-		} else if a != "" && audio == "" {
-			audio = a
-		}
+		info.read(line)
 	}
+	height, audio = info.height, info.audios()
 	if err != nil || len(jpg) == 0 {
 		log.Printf("[thumbs] %s: no frame: %v", short(id), err)
 		return height, audio
