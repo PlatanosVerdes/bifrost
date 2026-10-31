@@ -217,8 +217,9 @@ type upstream struct {
 	cancel context.CancelFunc
 }
 
-func feed(parent context.Context, id string, resp *http.Response, first []byte) *upstream {
+func feed(parent context.Context, id string, resp *http.Response, first []byte, session *engineSession) *upstream {
 	ctx, cancel := context.WithCancel(parent)
+	context.AfterFunc(ctx, session.stop)
 	u := &upstream{id: id, stat: statURL(resp), chunks: make(chan []byte, 4), ctx: ctx, cancel: cancel}
 	go u.pump(resp.Body, first)
 	return u
@@ -379,7 +380,7 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, step
 	}()
 	// open() looks at its deadline only between attempts; a request the engine holds would hold the probe.
 	expired := time.AfterFunc(time.Until(openBy), abandon)
-	resp, ok := open(pctx, s.h.client, target, s.headers, label, openBy)
+	resp, session, ok := openEngine(pctx, s.h.client, target, s.headers, label, openBy)
 	if !ok {
 		if ctx.Err() == nil {
 			s.h.noteOutcome(cand, "failed")
@@ -390,13 +391,14 @@ func (s *stream) probe(ctx context.Context, cand, current string, w *swarm, step
 	first, ok := awaitFirstBytes(pctx, resp.Body, label, start, openBy)
 	if !expired.Stop() || !ok {
 		resp.Body.Close()
+		session.stop()
 		if ctx.Err() == nil {
 			s.h.noteOutcome(cand, "failed")
 			keep("sent no video")
 		}
 		return
 	}
-	up := feed(pctx, cand, resp, first)
+	up := feed(pctx, cand, resp, first, session)
 	if up.stat == "" {
 		keep("has no engine stat to measure")
 		return

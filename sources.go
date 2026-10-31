@@ -186,7 +186,7 @@ func (h *hub) servePick(w http.ResponseWriter, r *http.Request) {
 	openBy := start.Add(min(h.sourceWait, probeOpenWait))
 	label := s.label + " [pick " + short(body.ID) + "]"
 	target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-probe-%d", h.base, body.ID, h.probes.Add(1))
-	resp, ok := open(s.ctx, h.client, target, s.headers, label, openBy)
+	resp, session, ok := openEngine(s.ctx, h.client, target, s.headers, label, openBy)
 	if !ok {
 		h.noteOutcome(body.ID, "failed")
 		writeError(w, http.StatusBadGateway, failed)
@@ -195,11 +195,12 @@ func (h *hub) servePick(w http.ResponseWriter, r *http.Request) {
 	first, ok := awaitFirstBytes(s.ctx, resp.Body, label, start, openBy)
 	if !ok {
 		resp.Body.Close()
+		session.stop()
 		h.noteOutcome(body.ID, "failed")
 		writeError(w, http.StatusBadGateway, failed)
 		return
 	}
-	hv := handover{up: feed(s.ctx, body.ID, resp, first), reason: "picked on the page", outcome: make(chan string, 1)}
+	hv := handover{up: feed(s.ctx, body.ID, resp, first, session), reason: "picked on the page", outcome: make(chan string, 1)}
 	select {
 	case s.handover <- hv:
 	case <-s.ctx.Done():

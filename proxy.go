@@ -308,7 +308,7 @@ func (s *stream) findSource(ctx context.Context, p plan, headers http.Header) (f
 		// Each stream its own pid: without one the engine takes every open from bifrost for one player,
 		// and opening a second channel stopped the first.
 		target := fmt.Sprintf("%s/ace/getstream?id=%s&pid=bifrost-play-%d", s.h.base, id, s.h.probes.Add(1))
-		r, ok := open(ctx, s.h.client, target, headers, label, srcDeadline)
+		r, session, ok := openEngine(ctx, s.h.client, target, headers, label, srcDeadline)
 		if !ok {
 			if ctx.Err() == nil {
 				s.h.noteOutcome(id, "failed")
@@ -318,6 +318,7 @@ func (s *stream) findSource(ctx context.Context, p plan, headers http.Header) (f
 		b, ok := awaitFirstBytes(ctx, r.Body, label, time.Now(), srcDeadline)
 		if !ok {
 			r.Body.Close()
+			session.stop()
 			if ctx.Err() == nil {
 				s.h.noteOutcome(id, "failed")
 			}
@@ -332,7 +333,7 @@ func (s *stream) findSource(ctx context.Context, p plan, headers http.Header) (f
 			s.h.lastGood[p.slug] = id
 			s.h.mu.Unlock()
 		}
-		return found{up: feed(ctx, id, r, b), header: r.Header.Clone()}, true
+		return found{up: feed(ctx, id, r, b, session), header: r.Header.Clone()}, true
 	}
 	return found{}, false
 }
