@@ -84,19 +84,25 @@ func TestJudgeSwitchesOnlyToAClearlyBetterSource(t *testing.T) {
 func TestCandidatesRotateNeverProbedFirst(t *testing.T) {
 	ids := []string{"a", "b", "c", "d"}
 	t0 := time.Date(2026, 10, 20, 21, 0, 0, 0, time.UTC)
-	if got := nextCandidate(ids, "a", nil); got != "b" {
+	if got := nextCandidate(ids, "a", nil, nil); got != "b" {
 		t.Errorf("first probe %q, want the next source in the list", got)
 	}
 	probed := map[string]time.Time{"b": t0, "c": t0.Add(time.Minute)}
-	if got := nextCandidate(ids, "a", probed); got != "d" {
+	if got := nextCandidate(ids, "a", probed, nil); got != "d" {
 		t.Errorf("got %q, want the one never probed", got)
 	}
 	probed["d"] = t0.Add(2 * time.Minute)
-	if got := nextCandidate(ids, "a", probed); got != "b" {
+	if got := nextCandidate(ids, "a", probed, nil); got != "b" {
 		t.Errorf("got %q, want the one probed longest ago", got)
 	}
-	if got := nextCandidate([]string{"a"}, "a", nil); got != "" {
+	if got := nextCandidate([]string{"a"}, "a", nil, nil); got != "" {
 		t.Errorf("got %q with a single source, want none", got)
+	}
+	if got := nextCandidate(ids, "a", nil, map[string]bool{"b": true}); got != "c" {
+		t.Errorf("got %q, want the next source that does not loop", got)
+	}
+	if got := nextCandidate([]string{"a", "b"}, "a", nil, map[string]bool{"b": true}); got != "b" {
+		t.Errorf("got %q, want the looping one when it is the only other", got)
 	}
 }
 
