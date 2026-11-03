@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -195,4 +196,61 @@ func TestSlateRunsJoinWithoutAJump(t *testing.T) {
 			t.Errorf("%s ends at %.1fs, want three loops", stream, prev)
 		}
 	}
+}
+
+// A source that hangs keeps the search going; the viewer is told there is no broadcast anyway.
+func TestSlateTurnsOffAirBeforeTheSearchGivesUp(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("no ffmpeg")
+	}
+	hang := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	srv, h := newSwitchingProxy(t, hang, slowSource)
+	h.ffmpeg = bin
+	if h.slate, err = slate.New(slate.OffAir); err != nil {
+		t.Fatal(err)
+	}
+	if h.loading, err = slate.New(slate.Loading); err != nil {
+		t.Fatal(err)
+	}
+	h.sourceWait, h.channelWait = 10*time.Second, 10*time.Second
+	after := slate.OffAirAfter
+	slate.OffAirAfter = 500 * time.Millisecond
+	t.Cleanup(func() { slate.OffAirAfter = after })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/channel/channel-a-1080p", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+
+	loading, offAir := slatePayload(t, slate.Loading, slate.OffAir), slatePayload(t, slate.OffAir, slate.Loading)
+	at, offAt := bytes.Index(got, loading), bytes.Index(got, offAir)
+	if at < 0 {
+		t.Fatal("the viewer never got the loading slate")
+	}
+	if offAt < at {
+		t.Errorf("the off-air slate did not follow the loading one (at %d and %d of %d bytes)", at, offAt, len(got))
+	}
+}
+
+// slatePayload is a packet body from the start of one slate that the other lacks: the rebaser rewrites
+// headers and timestamps, never the picture.
+func slatePayload(t *testing.T, from, other []byte) []byte {
+	t.Helper()
+	for i := 0; i+mpegts.PacketSize <= len(from) && i < 200*mpegts.PacketSize; i += mpegts.PacketSize {
+		p := from[i : i+mpegts.PacketSize]
+		if p[1]&0x40 != 0 || p[3]&0x30 != 0x10 {
+			continue
+		}
+		if body := p[4:]; !bytes.Contains(other, body) {
+			return body
+		}
+	}
+	t.Fatal("no packet tells the slates apart")
+	return nil
 }

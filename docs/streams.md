@@ -123,8 +123,10 @@ stream where it was.
 
 With ffmpeg available (and `SLATE` not `off`) a channel does not answer with an error. The viewer is
 sent a 24 s looping slate at once, so the player starts without waiting: a loading slate ("Tuning in…")
-while the sources are first tried, then, once every source has failed within `CHANNEL_MAX_WAIT`, the
-off-air slate. bifrost keeps trying the sources every 30 s while anyone watches. The first one to
+while the sources are first tried, then the off-air slate ("Waiting for the broadcast") after 30 s with
+no video, or sooner if every source has already failed. The 30 s do not wait for the search: a channel
+with many dead sources can take minutes to try them all, and the loading slate that long reads as a
+hung TV. bifrost keeps trying the sources every 30 s while anyone watches. The first one to
 deliver video is remuxed next to the slate and takes over through the same handover as a switch, so
 the stream never restarts. Both slates are embedded MPEG-TS played at their own pace, at no CPU cost;
 see [internal/slate/render/README.md](../internal/slate/render/README.md) to rebuild them.

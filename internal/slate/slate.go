@@ -24,7 +24,11 @@ const (
 	Lead = 2 * time.Second // sent at once, so a player starts without waiting
 )
 
-var Retry = 30 * time.Second
+var (
+	Retry = 30 * time.Second
+	// Past this, a channel with no video says so, however long the sources take to fail.
+	OffAirAfter = 30 * time.Second
+)
 
 // Its tracks last exactly as long as each other, so each run carries the clock on by ticks.
 type Slate struct {
