@@ -374,6 +374,14 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 		player.Slate = s.h.slate
 	}
 	spliceNext := false
+	offAirBy := start.Add(slate.OffAirAfter)
+	offAir := time.After(slate.OffAirAfter)
+	showOffAir := func() {
+		if s.h.slate != nil && player.Slate != s.h.slate {
+			log.Printf("[proxy] %s no video after %s, showing the off-air slate", s.label, time.Since(start).Round(time.Second))
+			player, spliceNext = &slate.Player{Slate: s.h.slate}, true
+		}
+	}
 	tick := time.NewTicker(slate.Tick)
 	defer tick.Stop()
 	results := make(chan *found, 1)
@@ -397,6 +405,9 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 		next.mux.stop()
 		src.up.cancel()
 		next, src, retry = nil, nil, time.After(slate.Retry)
+		if time.Now().After(offAirBy) {
+			showOffAir()
+		}
 	}
 	for {
 		select {
@@ -418,9 +429,7 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 					s.gaveUp(ctx, start)
 					log.Printf("[proxy] %s keeps the slate, looking again every %s", s.label, slate.Retry)
 					gaveUp = true
-					if player.Slate != s.h.slate {
-						player, spliceNext = &slate.Player{Slate: s.h.slate}, true
-					}
+					showOffAir()
 				}
 				retry = time.After(slate.Retry)
 				continue
@@ -433,6 +442,12 @@ func (s *stream) runSlate(ctx context.Context, p plan, headers http.Header, star
 			}
 			src = r
 			next = &cutover{mux: mux, align: s.sourceIn(r.up.id, true), timer: time.NewTimer(remuxStartWait)}
+		case <-offAir:
+			offAir = nil
+			// A source already handing over gets its chance; fail() shows the slate if it does not deliver.
+			if next == nil {
+				showOffAir()
+			}
 		case <-retry:
 			retry = nil
 			search()
